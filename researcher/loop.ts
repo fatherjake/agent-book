@@ -10,7 +10,7 @@
  *
  * Multi-task (docs/TASKS.md): quick, verification and baseline runs use settings.devTask; the best, the
  * baseline bootstrap and promotion are per dev task (the best for todo and the best for
- * mastodon-bookmarks are independent). The holdout uses settings.holdoutTask: when it equals the dev task
+ * tiny-depth are independent). The holdout uses settings.holdoutTask: when it equals the dev task
  * it is the dev task's holdout suite (the old behaviour); otherwise the holdout task's runs (suite and phase
  * 'holdout'), which never enter the research workspace or the digest.
  *

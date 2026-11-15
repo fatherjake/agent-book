@@ -255,8 +255,11 @@ const RESEARCH_SCRATCH_TMPFS = `${RESEARCH_SCRATCH}:rw,nosuid,nodev,size=64m,uid
 /** Brownfield dev tasks: read-only (root-owned) copy of the checkpoint source. */
 export const RESEARCH_CODEBASE = '/research/codebase';
 const RESEARCH_CODEBASE_TMPFS = `${RESEARCH_CODEBASE}:rw,nosuid,nodev,noexec,size=768m,mode=0755`;
-/** Not copied into /research/codebase (VCS, dependencies, generated output). */
-export const CODEBASE_EXCLUDES = ['./.git', './node_modules', './vendor', './tmp', './log', './public/packs', './public/packs-test', './public/system', './coverage'] as const;
+/**
+ * Not copied into /research/codebase (VCS, dependencies, caches, generated output). tar --exclude
+ * patterns: unanchored names match at any depth (e.g. ui/node_modules), './x' only at the top.
+ */
+export const CODEBASE_EXCLUDES = ['./.git', 'node_modules', '.venv', '__pycache__', '.pytest_cache', '.ruff_cache', './ui/dist', './contracts/out', './contracts/cache', '*.sqlite*', './tmp', './coverage'] as const;
 
 /** --json-schema of the agentic proposal (extended surface + evidence + expectedSavings). */
 export const AGENTIC_PROPOSAL_JSON_SCHEMA = {

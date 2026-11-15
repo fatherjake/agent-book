@@ -65,24 +65,24 @@ describe('research workspace for a brownfield dev task (MOCK data)', () => {
     results = join(dir, 'results');
     tasksRoot = join(dir, 'benchmark', 'tasks');
     for (const [id, title, prompt] of [
-      ['mastodon-bookmarks', 'Re-implement saving statuses for later', 'Implement the save-for-later feature described in /spec/feature.md.'],
-      ['mastodon-filters', HOLDOUT_TITLE, HOLDOUT_PROMPT],
+      ['tiny-depth', 'Re-implement saving statuses for later', 'Implement the save-for-later feature described in /spec/feature.md.'],
+      ['tiny-pnl', HOLDOUT_TITLE, HOLDOUT_PROMPT],
     ]) {
       const tdir = join(tasksRoot, id);
       mkdirSync(join(tdir, 'spec'), { recursive: true });
       writeFileSync(join(tdir, 'prompt.md'), prompt + '\n');
-      writeFileSync(join(tdir, 'spec', 'feature.md'), `# Feature spec of ${id === 'mastodon-filters' ? 'the hidden task' : 'the dev task'}\n`);
+      writeFileSync(join(tdir, 'spec', 'feature.md'), `# Feature spec of ${id === 'tiny-pnl' ? 'the hidden task' : 'the dev task'}\n`);
       tasks[id] = { id, title, kind: 'brownfield', specPath: join(tdir, 'spec'), dir: tdir };
     }
     db = openDb(join(results, 'benchmark.db'));
     // Dev task: baseline with a verify run. Holdout task: runs under the SAME experiment (phase holdout)
     // and a whole experiment of its own (e.g. from another session that used it as the dev task).
-    const dev = db.insertExperiment({ kind: 'baseline', parentConfigId: null, candidateConfigId: 'baseline', hypothesis: 'Baseline verification', provider: 'p', model: 'm', status: 'verifying', taskId: 'mastodon-bookmarks' });
-    mkRun(dev.id, 'run-dev-1', 'mastodon-bookmarks', 'verify', 'dev transcript: grep app/models');
-    mkRun(dev.id, 'run-hold-1', 'mastodon-filters', 'holdout', `holdout transcript mentioning mastodon-filters and ${HOLDOUT_PROMPT}`);
+    const dev = db.insertExperiment({ kind: 'baseline', parentConfigId: null, candidateConfigId: 'baseline', hypothesis: 'Baseline verification', provider: 'p', model: 'm', status: 'verifying', taskId: 'tiny-depth' });
+    mkRun(dev.id, 'run-dev-1', 'tiny-depth', 'verify', 'dev transcript: grep app/models');
+    mkRun(dev.id, 'run-hold-1', 'tiny-pnl', 'holdout', `holdout transcript mentioning tiny-pnl and ${HOLDOUT_PROMPT}`);
     db.updateExperiment(dev.id, { status: 'completed', outcome: 'baseline', holdoutPassed: false });
-    const other = db.insertExperiment({ kind: 'manual', parentConfigId: null, candidateConfigId: 'baseline', hypothesis: 'Manual benchmark: npm run benchmark --task mastodon-filters', provider: 'p', model: 'm', status: 'verifying', taskId: 'mastodon-filters' });
-    mkRun(other.id, 'run-hold-2', 'mastodon-filters', 'verify', `another holdout transcript ${HOLDOUT_TITLE}`);
+    const other = db.insertExperiment({ kind: 'manual', parentConfigId: null, candidateConfigId: 'baseline', hypothesis: 'Manual benchmark: npm run benchmark --task tiny-pnl', provider: 'p', model: 'm', status: 'verifying', taskId: 'tiny-pnl' });
+    mkRun(other.id, 'run-hold-2', 'tiny-pnl', 'verify', `another holdout transcript ${HOLDOUT_TITLE}`);
     db.updateExperiment(other.id, { status: 'completed' });
     // A todo experiment is from another dev task: not shown either.
     const todo = db.insertExperiment({ kind: 'manual', parentConfigId: null, candidateConfigId: 'baseline', hypothesis: 'todo manual run', provider: 'p', model: 'm', status: 'verifying' });
@@ -95,7 +95,7 @@ describe('research workspace for a brownfield dev task (MOCK data)', () => {
   });
 
   it('contains only dev-task material; the holdout task is invisible (one pass/fail bit only)', async () => {
-    const history = buildHistoryDigest(db, { taskId: 'mastodon-bookmarks' });
+    const history = buildHistoryDigest(db, { taskId: 'tiny-depth' });
     const ws = await buildResearchWorkspace({
       db,
       resultsDir: results,
@@ -108,8 +108,8 @@ describe('research workspace for a brownfield dev task (MOCK data)', () => {
       singleVariableExperiments: 8,
       profile: fakeProfile,
       repoRoot: dir,
-      taskId: 'mastodon-bookmarks',
-      hiddenTaskIds: ['mastodon-filters'],
+      taskId: 'tiny-depth',
+      hiddenTaskIds: ['tiny-pnl'],
       getTask,
     });
     try {
@@ -124,7 +124,7 @@ describe('research workspace for a brownfield dev task (MOCK data)', () => {
       // No file mentions the holdout task in any form.
       for (const f of files) {
         const text = readFileSync(join(ws.dir, f), 'utf8');
-        for (const needle of ['mastodon-filters', HOLDOUT_TITLE, HOLDOUT_PROMPT, 'the hidden task', 'todo transcript', 'todo manual run']) expect(text, `${f} contains ${needle}`).not.toContain(needle);
+        for (const needle of ['tiny-pnl', HOLDOUT_TITLE, HOLDOUT_PROMPT, 'the hidden task', 'todo transcript', 'todo manual run']) expect(text, `${f} contains ${needle}`).not.toContain(needle);
       }
       // The holdout result is one bit in outcome.json.
       const outcome = JSON.parse(readFileSync(join(ws.dir, 'experiments', 'exp-0001', 'outcome.json'), 'utf8'));
@@ -132,11 +132,11 @@ describe('research workspace for a brownfield dev task (MOCK data)', () => {
       expect(JSON.stringify(outcome)).not.toContain('secret');
       // README describes the brownfield task and the read-only codebase mount.
       const readme = readFileSync(join(ws.dir, 'README.md'), 'utf8');
-      expect(readme).toContain('implements a feature in a large EXISTING codebase');
+      expect(readme).toContain('implements a feature in an EXISTING codebase');
       expect(readme).toContain('/research/codebase/');
       expect(readme).not.toContain('builds a full-stack todo app');
       // Digest: dev task only.
-      expect(history).not.toContain('mastodon-filters');
+      expect(history).not.toContain('tiny-pnl');
       expect(history).toContain('holdout: failed');
       expect(history).not.toContain('todo manual run');
     } finally {
@@ -145,7 +145,7 @@ describe('research workspace for a brownfield dev task (MOCK data)', () => {
   });
 
   it('a file carrying hidden-task markers is removed by the final scan', async () => {
-    writeFileSync(join(results, 'runs', 'run-dev-1', 'trace.jsonl'), `{"note":"saw benchmark/tasks/mastodon-filters/prompt.md"}\n`);
+    writeFileSync(join(results, 'runs', 'run-dev-1', 'trace.jsonl'), `{"note":"saw benchmark/tasks/tiny-pnl/prompt.md"}\n`);
     const ws = await buildResearchWorkspace({
       db,
       resultsDir: results,
@@ -158,8 +158,8 @@ describe('research workspace for a brownfield dev task (MOCK data)', () => {
       singleVariableExperiments: 8,
       profile: fakeProfile,
       repoRoot: dir,
-      taskId: 'mastodon-bookmarks',
-      hiddenTaskIds: ['mastodon-filters'],
+      taskId: 'tiny-depth',
+      hiddenTaskIds: ['tiny-pnl'],
       getTask,
     });
     try {
@@ -168,7 +168,7 @@ describe('research workspace for a brownfield dev task (MOCK data)', () => {
     } finally {
       ws.cleanup();
     }
-    expect(hiddenTaskMarkers([{ id: 'mastodon-filters', title: HOLDOUT_TITLE }])).toEqual(['mastodon-filters', 'benchmark/tasks/mastodon-filters', 'evaluator/tasks/mastodon-filters', HOLDOUT_TITLE]);
+    expect(hiddenTaskMarkers([{ id: 'tiny-pnl', title: HOLDOUT_TITLE }])).toEqual(['tiny-pnl', 'benchmark/tasks/tiny-pnl', 'evaluator/tasks/tiny-pnl', HOLDOUT_TITLE]);
   });
 
   it('brownfield research container: read-only /research/codebase tmpfs, no host mounts', () => {

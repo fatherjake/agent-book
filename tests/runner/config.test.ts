@@ -129,7 +129,7 @@ describe('claude-code backend config', () => {
   it('loads the Claude Code baseline without tools.json', () => {
     const cfg = loadConfig('baseline');
     expect(cfg).toMatchObject({ backend: 'claude-code', provider: 'anthropic', model: 'claude-sonnet-5-5', claudeCode: { systemPromptMode: 'append' }, tools: [] });
-    expect(cfg.skills.map((s) => s.name)).toEqual(['fullstack-checklist']);
+    expect(cfg.skills.map((s) => s.name)).toEqual(['verification-checklist']);
   });
 
   it('accepts the full claudeCode block and loads CLAUDE.md', () => {

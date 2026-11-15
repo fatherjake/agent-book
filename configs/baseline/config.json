@@ -1,6 +1,6 @@
 {
   "id": "baseline",
-  "description": "Claude Code baseline: the real Claude Code CLI (subscription auth via the host gateway), Sonnet 5.5, default tools, the checklist skill, a short appended system prompt.",
+  "description": "Claude Code baseline: the real Claude Code CLI (subscription auth via the host gateway), Sonnet 5.5, default tools, a generic verification-checklist skill, a short task-neutral appended system prompt.",
   "backend": "claude-code",
   "provider": "anthropic",
   "model": "claude-sonnet-5-5",

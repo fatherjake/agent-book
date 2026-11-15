@@ -101,7 +101,7 @@ describe.skipIf(!available)('claude-code backend (docker, fake upstream)', () =>
     const body = JSON.parse(msgs[0].body);
     expect(body.model).toBe('claude-sonnet-5-5');
     expect(JSON.stringify(body.system)).toContain('There is no network access');
-    expect(JSON.stringify(body)).toContain('fullstack-checklist'); // user skill discovered
+    expect(JSON.stringify(body)).toContain('verification-checklist'); // user skill discovered
     expect(JSON.stringify(body.messages)).toContain('<file path=\\"/spec/requirements.md\\">');
     const runDir = join(resultsDir, 'runs', r.runId);
     const usage = readFileSync(join(runDir, 'usage.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));

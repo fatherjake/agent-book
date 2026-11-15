@@ -28,8 +28,8 @@ function fakeAgent(): ResearchAgent & { inputs: Parameters<ResearchAgent['propos
 
 const TASKS: Record<string, { id: string; minPassRate: number }> = {
   todo: { id: 'todo', minPassRate: 1 },
-  'mastodon-bookmarks': { id: 'mastodon-bookmarks', minPassRate: 0.6 },
-  'mastodon-filters': { id: 'mastodon-filters', minPassRate: 1 },
+  'tiny-depth': { id: 'tiny-depth', minPassRate: 0.6 },
+  'tiny-pnl': { id: 'tiny-pnl', minPassRate: 1 },
 };
 const getTask = (id: string) => {
   if (!TASKS[id]) throw new Error(`unknown task ${id}`);
@@ -43,8 +43,8 @@ const settings = (o: Partial<ResearchSettings> = {}): ResearchSettings => ({
   maxResearchCostUsd: 1000,
   quickRunMaxTokenRatio: null,
   holdout: { onPromotion: true, runs: 1 },
-  devTask: 'mastodon-bookmarks',
-  holdoutTask: 'mastodon-filters',
+  devTask: 'tiny-depth',
+  holdoutTask: 'tiny-pnl',
   ...o,
 });
 
@@ -86,11 +86,11 @@ describe('research loop with a brownfield dev task', () => {
     );
     expect(res.stopReason).toBe('max_experiments');
     expect(res.best!.configId).toBe('experiments/001');
-    expect(res.best!.taskId).toBe('mastodon-bookmarks');
+    expect(res.best!.taskId).toBe('tiny-depth');
     // todo's best is untouched.
     expect(db.getBestVerified('todo')!.medianTokens).toBe(40000);
 
-    const exps = db.listExperiments({ taskId: 'mastodon-bookmarks' });
+    const exps = db.listExperiments({ taskId: 'tiny-depth' });
     expect(exps.map((e) => [e.kind, e.outcome, e.status])).toEqual([
       ['baseline', 'baseline', 'completed'],
       ['candidate', 'promoted', 'completed'],
@@ -102,28 +102,28 @@ describe('research loop with a brownfield dev task', () => {
 
     // Quick / verify / baseline runs on the dev task; holdout on the holdout task (suite + phase holdout).
     const nonHoldout = bench.calls.filter((c) => c.phase !== 'holdout');
-    expect(new Set(nonHoldout.map((c) => c.taskId))).toEqual(new Set(['mastodon-bookmarks']));
+    expect(new Set(nonHoldout.map((c) => c.taskId))).toEqual(new Set(['tiny-depth']));
     const holdouts = bench.calls.filter((c) => c.phase === 'holdout');
     expect(holdouts.map((c) => [c.configId, c.taskId, c.suite])).toEqual([
-      ['baseline', 'mastodon-filters', 'holdout'],
-      ['experiments/001', 'mastodon-filters', 'holdout'],
+      ['baseline', 'tiny-pnl', 'holdout'],
+      ['experiments/001', 'tiny-pnl', 'holdout'],
     ]);
     expect(exps[1].holdoutPassed).toBe(true);
-    expect(db.listRuns({ taskId: 'mastodon-filters' }).every((r) => r.phase === 'holdout' && r.suite === 'holdout')).toBe(true);
+    expect(db.listRuns({ taskId: 'tiny-pnl' }).every((r) => r.phase === 'holdout' && r.suite === 'holdout')).toBe(true);
 
     // The research agent gets the dev task and the hidden holdout task, and a digest without the holdout task.
     const input = agent.inputs[0];
-    expect(input.context).toMatchObject({ taskId: 'mastodon-bookmarks', hiddenTaskIds: ['mastodon-filters'] });
+    expect(input.context).toMatchObject({ taskId: 'tiny-depth', hiddenTaskIds: ['tiny-pnl'] });
     expect(input.bestConfigId).toBe('baseline');
-    expect(input.history).not.toContain('mastodon-filters');
+    expect(input.history).not.toContain('tiny-pnl');
     expect(input.history).not.toContain('todo baseline');
     expect(input.history).toMatch(/BEST VERIFIED: baseline .* median 100,000/);
     expect(buildHistoryDigest(db, { taskId: 'todo' })).toMatch(/median 40,000/);
 
     // Published best of the dev task goes to its own directory.
-    const summaryFile = join(results, 'best-config-mastodon-bookmarks', 'summary.json');
+    const summaryFile = join(results, 'best-config-tiny-depth', 'summary.json');
     expect(existsSync(summaryFile)).toBe(true);
-    expect(JSON.parse(readFileSync(summaryFile, 'utf8'))).toMatchObject({ configId: 'experiments/001', taskId: 'mastodon-bookmarks' });
+    expect(JSON.parse(readFileSync(summaryFile, 'utf8'))).toMatchObject({ configId: 'experiments/001', taskId: 'tiny-depth' });
     expect(existsSync(join(results, 'best-config', 'summary.json'))).toBe(false);
   });
 
@@ -132,11 +132,11 @@ describe('research loop with a brownfield dev task', () => {
     const bench = makeFakeBench(db, plan);
     await runResearchLoop(
       { db, runBenchmark: bench.fn, researchAgent: fakeAgent(), clock: makeFakeClock(), getTask },
-      { settings: settings({ holdoutTask: 'mastodon-bookmarks', maxExperiments: 1 }), paths: { configsRoot: configs, resultsDir: results } },
+      { settings: settings({ holdoutTask: 'tiny-depth', maxExperiments: 1 }), paths: { configsRoot: configs, resultsDir: results } },
     );
     const holdouts = bench.calls.filter((c) => c.phase === 'holdout');
     expect(holdouts.length).toBeGreaterThan(0);
-    expect(holdouts.every((c) => c.taskId === 'mastodon-bookmarks' && c.suite === 'holdout')).toBe(true);
+    expect(holdouts.every((c) => c.taskId === 'tiny-depth' && c.suite === 'holdout')).toBe(true);
   });
 
   it('todo (default settings) still requires every verification run to pass', async () => {

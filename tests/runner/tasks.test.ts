@@ -9,7 +9,7 @@ import { allBannedTerms, allReferenceDiffPaths, getTask, listTasks, loadTaskFrom
 describe('task registry', () => {
   let repo: { root: string; tasksDir: string };
   beforeEach(() => {
-    repo = makeTaskRepo([brownfieldDef('mastodon-a'), brownfieldDef('mastodon-b', { bannedTerms: ['custom_filter', 'CustomFilter'], browserAgent: 'required', minPassRate: 1 })]);
+    repo = makeTaskRepo([brownfieldDef('brownfield-a'), brownfieldDef('brownfield-b', { bannedTerms: ['custom_filter', 'CustomFilter'], browserAgent: 'required', minPassRate: 1 })]);
   });
   afterEach(() => rmSync(repo.root, { recursive: true, force: true }));
 
@@ -29,29 +29,29 @@ describe('task registry', () => {
 
   it('loads and resolves a valid brownfield task', () => {
     const tasks = listTasks({ tasksDir: repo.tasksDir, repoRoot: repo.root, fresh: true });
-    expect(tasks.map((t) => t.id)).toEqual(['mastodon-a', 'mastodon-b']);
-    const a = getTask('mastodon-a', { tasksDir: repo.tasksDir, repoRoot: repo.root });
-    expect(a.promptPath).toBe(join(repo.tasksDir, 'mastodon-a', 'prompt.md'));
-    expect(a.specPath).toBe(join(repo.tasksDir, 'mastodon-a', 'spec'));
-    expect(a.evaluatorPath).toBe(join(repo.root, 'evaluator/tasks/mastodon-a/index.ts'));
+    expect(tasks.map((t) => t.id)).toEqual(['brownfield-a', 'brownfield-b']);
+    const a = getTask('brownfield-a', { tasksDir: repo.tasksDir, repoRoot: repo.root });
+    expect(a.promptPath).toBe(join(repo.tasksDir, 'brownfield-a', 'prompt.md'));
+    expect(a.specPath).toBe(join(repo.tasksDir, 'brownfield-a', 'spec'));
+    expect(a.evaluatorPath).toBe(join(repo.root, 'evaluator/tasks/brownfield-a/index.ts'));
     expect(a.sandbox.extraVolumes).toEqual(['/data']);
   });
 
   it('unknown ids fail with the list of available tasks', () => {
-    expect(() => getTask('nope', { tasksDir: repo.tasksDir, repoRoot: repo.root })).toThrow(/unknown task; available: mastodon-a, mastodon-b/);
+    expect(() => getTask('nope', { tasksDir: repo.tasksDir, repoRoot: repo.root })).toThrow(/unknown task; available: brownfield-a, brownfield-b/);
     expect(() => getTask('../etc', { tasksDir: repo.tasksDir })).toThrow(TaskError);
   });
 
   it('bannedTerms: union over every non-todo task; referenceDiffs only when the file exists', () => {
     expect(allBannedTerms({ tasksDir: repo.tasksDir, repoRoot: repo.root }).sort()).toEqual(['CustomFilter', 'bookmark', 'custom_filter'].sort());
     expect(allReferenceDiffPaths({ tasksDir: repo.tasksDir, repoRoot: repo.root })).toEqual([]);
-    mkdirSync(join(repo.root, 'evaluator/tasks/mastodon-a'), { recursive: true });
-    writeFileSync(join(repo.root, 'evaluator/tasks/mastodon-a/reference.diff'), 'diff --git a/x b/x\n');
-    expect(allReferenceDiffPaths({ tasksDir: repo.tasksDir, repoRoot: repo.root })).toEqual([join(repo.root, 'evaluator/tasks/mastodon-a/reference.diff')]);
+    mkdirSync(join(repo.root, 'evaluator/tasks/brownfield-a'), { recursive: true });
+    writeFileSync(join(repo.root, 'evaluator/tasks/brownfield-a/reference.diff'), 'diff --git a/x b/x\n');
+    expect(allReferenceDiffPaths({ tasksDir: repo.tasksDir, repoRoot: repo.root })).toEqual([join(repo.root, 'evaluator/tasks/brownfield-a/reference.diff')]);
   });
 
   it.each([
-    ['id differs from dir', { id: 'mastodon-z' }, /must equal the directory name/],
+    ['id differs from dir', { id: 'brownfield-z' }, /must equal the directory name/],
     ['unknown field', { color: 'red' }, /unknown field 'color'/],
     ['bad kind', { kind: 'bluefield' }, /'kind'/],
     ['builtin outside todo', { promptFile: 'builtin:todo' }, /may not be builtin:todo/],
@@ -73,16 +73,16 @@ describe('task registry', () => {
     ['browserAgent', { browserAgent: 'sometimes' }, /browserAgent/],
     ['shmSize format', { sandbox: { cpus: 2, memory: '2g', pidsLimit: 512, shmSize: '1 GB' } }, /shmSize/],
   ])('rejects: %s', (_name, patch, re) => {
-    expect(() => validateTaskDefinition(brownfieldDef('mastodon-a', patch as Record<string, unknown>), 'mastodon-a')).toThrow(re);
+    expect(() => validateTaskDefinition(brownfieldDef('brownfield-a', patch as Record<string, unknown>), 'brownfield-a')).toThrow(re);
   });
 
   it('rejects a missing prompt file or a spec dir inside evaluator/', () => {
-    const r = makeTaskRepo([brownfieldDef('mastodon-c', { promptFile: 'missing.md' })]);
+    const r = makeTaskRepo([brownfieldDef('brownfield-c', { promptFile: 'missing.md' })]);
     try {
-      expect(() => loadTaskFromDir(join(r.tasksDir, 'mastodon-c'), r.root)).toThrow(/promptFile missing.md does not exist/);
-      writeFileSync(join(r.tasksDir, 'mastodon-c', 'task.json'), JSON.stringify(brownfieldDef('mastodon-c', { specDir: '../../../evaluator' })));
+      expect(() => loadTaskFromDir(join(r.tasksDir, 'brownfield-c'), r.root)).toThrow(/promptFile missing.md does not exist/);
+      writeFileSync(join(r.tasksDir, 'brownfield-c', 'task.json'), JSON.stringify(brownfieldDef('brownfield-c', { specDir: '../../../evaluator' })));
       mkdirSync(join(r.root, 'evaluator'), { recursive: true });
-      expect(() => loadTaskFromDir(join(r.tasksDir, 'mastodon-c'), r.root)).toThrow(/does not exist|evaluator/);
+      expect(() => loadTaskFromDir(join(r.tasksDir, 'brownfield-c'), r.root)).toThrow(/does not exist|evaluator/);
     } finally {
       rmSync(r.root, { recursive: true, force: true });
     }

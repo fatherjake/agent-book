@@ -1,20 +1,21 @@
-# Multi-task benchmark: design contract (binding for the build team)
+# Multi-task benchmark: design contract
 
-Status: design for the Mastodon upgrade. The todo benchmark becomes task `todo`; two Mastodon
-"brownfield" tasks are added. Everything here is a contract between three work streams
-(env, core, checks). Change it only by agreement (message the lead).
+Status: the brownfield benchmark runs on **tiny** (github.com/fatherjake/tiny), a small perpetual-futures
+exchange (Python validator sim + FastAPI/WebSocket API, React + TypeScript UI) created on 2026-10-30, after
+the coding model's training cutoff, so neither the codebase nor the features can come from the model's
+training data. The todo benchmark is task `todo` and keeps working unchanged.
 
 ## 1. Goals
 
-* Measure coding-agent tokens on **implementing a feature in an existing, large codebase**
-  (Mastodon, Rails + React/Redux), where navigation, context hygiene and test loops dominate.
-* **Dev task:** `mastodon-bookmarks`: re-implement Bookmarks (upstream PR #7107, squash commit
-  `dfea7368c934f600bd0b6b93b4a6c008a4e265b0`, merged 2019-11-13). Checkpoint = its first parent.
-* **Holdout task:** `mastodon-filters`: re-implement keyword/phrase filtering (upstream PR #7905,
-  merged 2018-06-29). Checkpoint = first parent of its merge commit. The research agent never sees
-  anything about this task: not its name, prompt, results, checks or transcripts. It sees one
-  pass/fail bit per promoted experiment, as with today's holdout.
-* `todo` keeps working **unchanged**: same image, spec, evaluator, scores and tests.
+* Measure coding-agent tokens on **implementing a feature in an existing codebase the model has never
+  seen**, so navigation, context hygiene and test loops are real work and nothing can be recalled.
+* Features are invented for the benchmark and **never published**: the public tiny repo only ever has the
+  checkpoint; each reference implementation lives only in the hidden `evaluator/tasks/<id>/reference.diff`.
+  Don't push them anywhere public (a future model would train on them).
+* **Dev task:** `tiny-depth`: a depth chart tab in the order book card (frontend only: the book data already
+  reaches the UI). Holdout: the task's own holdout suite (different pinned books and viewport). A second tiny
+  feature task can become the holdout task later (`holdoutTask`); the research agent then sees nothing about
+  it but one pass/fail bit per promoted experiment.
 * Token accounting is unchanged. Only the coding run's own model calls count. Config artifacts
   (skills, CLAUDE.md, docs, bin tools, hooks) are produced by the research agent (role
   `research`) and are free for the run, except that whatever the run loads into context is paid
@@ -37,15 +38,15 @@ evaluator/tasks/<taskId>/               HIDDEN: checks, seed scripts, upstream t
 
 ```ts
 interface TaskDefinition {
-  id: string;                         // 'todo' | 'mastodon-bookmarks' | 'mastodon-filters'
+  id: string;                         // 'todo' | 'tiny-depth' | ...
   title: string;
   kind: 'greenfield' | 'brownfield';
   promptFile: string;                 // relative to the task dir; todo: keep current prompt logic
   specDir: string;                    // copied to /spec
   image: { builder: string };         // module exporting ensureTaskImage(): Promise<ImageInfo>
-  workspace: { path: '/workspace'; snapshot: 'tree' | 'git-diff' };  // todo: tree; mastodon: git-diff
+  workspace: { path: '/workspace'; snapshot: 'tree' | 'git-diff' };  // todo: tree; tiny: git-diff
   sandbox: { cpus: number; memory: string; pidsLimit: number;
-             extraVolumes?: string[];   // anonymous writable volumes, e.g. ['/data'] for Postgres/Redis
+             extraVolumes?: string[];   // anonymous writable volumes (tiny needs none)
              extraTmpfs?: string[];     // e.g. ['/run/postgresql:rw,nosuid,size=1m,uid=1000']
              shmSize?: string };        // /dev/shm size (--shm-size), e.g. '512m' for Chromium
   limits?: Partial<RunLimits>;        // task budget: each field replaces the config's limit; run overrides only tighten (§7)
@@ -57,120 +58,94 @@ interface TaskDefinition {
 }
 ```
 
-`configs/research.json` gains `devTask` (default `'todo'`) and `holdoutTask` (default `'todo'`,
-which means today's behaviour: same task, holdout suite). Mastodon research uses
-`devTask: 'mastodon-bookmarks', holdoutTask: 'mastodon-filters'`. CLIs get `--task <id>`
-(benchmark) and `--dev-task/--holdout-task` (research).
+`configs/research.json` has `devTask` (built-in default `'todo'`; the file sets `'tiny-depth'`) and
+`holdoutTask` (default: the dev task, i.e. its holdout suite). CLIs take `--task <id>` (benchmark) and
+`--dev-task/--holdout-task` (research).
 
-## 3. Image contract (env stream). Brownfield tasks
+## 3. Image contract (tiny tasks)
 
-Base image `frugal-task-<taskId>:<hash>`; Claude Code layer `frugal-task-<taskId>-cc:<hash>`.
+`benchmark/tasks/tiny/image.ts` builds two images shared by every tiny-* task (inputs in
+`benchmark/tasks/tiny/build.json`; tags are content hashes of the inputs):
 
-* `/workspace` is the Mastodon repo at the checkpoint, owned by uid 1000. Git history is
-  **truncated to a single commit** ("checkpoint"), so nothing about the future is reachable
-  (no other refs, packs or reflogs). Gems and node_modules are preinstalled, and the repo is clean
-  (`git status` empty) after setup.
-* Postgres and Redis are inside the same container, running as uid 1000. Their data lives in
-  `/data` (an anonymous volume; the template is copied at start if empty). The dev and test
-  databases are created and the schema loaded at build time.
-  `/opt/frugal/task/services start|stop|status` is idempotent; the sandbox runs it at creation.
-* Environment (baked in): `RAILS_ENV=development`, the DB/Redis connection vars, `LOCAL_DOMAIN`,
-  secrets, and anything the app needs offline. `bundle exec rspec <file>` and `bin/rails` work
-  with no network.
-* **Claude Code needs Node >= 18 but this Mastodon needs Node 10/12.** Install Claude Code with its
-  own runtime (e.g. under `/opt/claude` with a private node), so `claude` works while `node`/`yarn`
-  on PATH stay the project's versions.
-* **Headless browser for the coding agent's own verification.** The image includes Chromium plus
-  Playwright, running on the private modern Node runtime (not the project's Node 10/12).
-  `/opt/frugal/task/pw-node <script.js>` runs a Node script with `require('playwright')`
-  resolvable and Chromium preconfigured (headless, no sandbox flags needed under cap-drop, no
-  network beyond localhost). It's documented in the task prompt as an available tool, so configs
-  and skills can build UI checks on it. The evaluator does NOT use this browser: hidden UI checks
-  run with the host's Playwright.
-* Must work under the existing hardening: `--read-only` root, cap-drop ALL, non-root uid 1000,
-  no network, writable only `/workspace`, `/data`, tmpfs `/tmp` and the declared tmpfs.
-* arm64 host (Apple Silicon). Prefer native arm64; if a 2018/2019 native dependency can't be built,
-  document the workaround (patch the lockfile version, or as a last resort `--platform linux/amd64`).
-* `/opt/frugal/task/app start` (evaluator only): runs migrations, precompiles assets (or another
-  documented way to serve the web UI), and serves the app on a port with the web UI working.
-* **Disk:** the host is short on disk. Before any `docker build`, check free space and don't
-  build below 12 GB free (`FRUGAL_MIN_FREE_GB`; a full rebuild needs ~8 GB). Reuse layers: both tasks share a base where possible.
-* Snapshot for `git-diff` tasks: after the run the runner stores `results/runs/<id>/workspace.patch`
-  (`git add -A && git diff --cached --binary` against the checkpoint, excluding log/ tmp/ node_modules
-  vendor/ public/packs*). The evaluator applies it to a fresh container from the base image.
+* `frugal-task-tiny:<sha256>` (task / evaluator base image): `python:3.12-slim-bookworm` + Node 22 + uv +
+  build-essential. `/workspace` is tiny at the pinned commit with the author's agent files stripped
+  (`CLAUDE.md`, `AGENTS.md`, `.agents`, `.cursor`, `.codex`), git history **truncated to a single commit**
+  ("checkpoint"), owned by uid 1000, `.venv` (`uv sync --frozen`) and `ui/node_modules` (`npm ci`)
+  preinstalled, `git status` clean. Playwright + Chromium at `/opt/frugal/pw` for the agent's own checks.
+* `frugal-task-tiny-cc:<h>`: + Claude Code (`CLAUDE_CODE_VERSION`), linked into `/usr/local/bin`.
+* Offline at run time: `UV_OFFLINE=1 UV_FROZEN=1` (so `uv run` uses the baked `.venv`), `npm_config_offline`.
+* `/opt/frugal/task/services start` only checks the dependencies are present (no background services).
+* `/opt/frugal/task/app start|stop|status|logs [--port 3000] [--bots 20] [--no-build]`: the sim (4 validators,
+  N bots, seeded price feed, API on 127.0.0.1:8000, no block log), `npm run build`, then `vite preview` on
+  0.0.0.0:PORT, which serves `ui/dist` and proxies the API routes and `/ws` to :8000.
+* `/opt/frugal/task/pw-node <script.js>`: Node with `require('playwright')` and headless Chromium.
+* Must work under the sandbox hardening: `--read-only` root, cap-drop ALL, non-root uid 1000, no network,
+  writable only `/workspace` and tmpfs `/tmp`.
+* **Disk:** builds refuse below `FRUGAL_MIN_FREE_GB` (default 12) free. The task image is ~3 GB.
+* Host helpers: `image.ts checkpoint-tree <dir>` (the checkpoint, byte-identical, same commit id) and
+  `image.ts ref-tree <taskId> <dir>` (HIDDEN: + the reference diff, staged).
 
-## 4. Evaluator contract (checks stream)
+## 4. Evaluator contract (tiny tasks)
 
-`evaluator/tasks/<taskId>/index.ts` exports
-`evaluateTask(opts: { runId; patchFile; suite; seed; outDir; image }) => Promise<EvaluationResult>`
-(the same `EvaluationResult` / `CheckResult` types; categories reuse `startup | backend | ui | browser`).
-The dispatcher in `evaluator/index.ts` routes by task; `todo` keeps the current code path.
+`evaluator/tasks/<taskId>/index.ts` exports `evaluateTask(opts) => Promise<EvaluationResult>`; the shared
+pipeline is `evaluator/tasks/tiny-common/evaluate.ts`:
 
-Mastodon checks (deterministic; `browserAgent: 'none'`):
+1. **startup**: fresh container from the base image, the patch applies (`startup.patch`), `npm run build`
+   passes (`startup.build`), `app start --no-build` serves the UI and the API through the forwarder
+   (`startup.app`).
+2. **regression** (`backend`): the whole vitest suite (`regression.ui`, including the run's own tests) and the
+   whole pytest suite (`regression.python`, ~30 s) pass.
+3. **ui** (`functional`): host Playwright, written only from the public spec. For tiny-depth the page talks to
+   the real sim except that `GET /book/*` and the WebSocket `book` frames are replaced by a **pinned book**
+   (fixtures + expectations in `evaluator/tasks/tiny-depth/fixtures.ts`), so every expected tooltip value
+   is computed exactly. Requests to anything but the app are aborted.
+4. **visual** (`visual`): screenshots of the card compared with the reference implementation's screenshots
+   (`evaluator/tasks/<id>/visual/<suite>-<shot>.png`), score = 100 × (0.5 tolerant pixel similarity +
+   0.5 multi-scale SSIM). The gate is the task's own calibrated threshold (tiny-depth: 50), a mandatory check;
+   the global 95 visual gate of todo does not apply.
 
-1. **startup**: the patch applies cleanly, migrations run, and the app boots and serves the web UI.
-2. **backend**: HTTP API checks against the running app with seeded users, OAuth apps, tokens and
-   statuses (public, unlisted, private and direct, from several authors). These are written from
-   the **public** feature spec in `spec/` plus the upstream API documentation. Never test something
-   the public spec doesn't state.
-3. **upstream**: the upstream PR's own spec files (hidden copies in `evaluator/tasks/<id>/upstream/`)
-   are copied into the patched tree and run with rspec. Each example is a check.
-4. **regression**: a curated, fast subset of existing specs near the touched code must still pass.
-5. **ui**: Playwright against the web UI. Log in as a seeded user, do the feature end to end, and
-   check persistence across a reload. Use the accessible names the public spec defines.
+Validation (required before done): the **reference** passes 100% of mandatory checks in both suites; the
+**bare checkpoint** passes startup and regression and fails the feature checks. Record both in
+`evaluator/tasks/<id>/VALIDATION.md`. Manual runs: `npx tsx evaluator/tasks/tiny-common/cli.ts <taskId>
+(--reference | --bare | --patch <file>) [--suite holdout]`; `FRUGAL_TINY_WRITE_REFERENCE=1` (reference only)
+rewrites the visual references.
 
-Validation (required before done): the **upstream reference** (checkpoint + upstream squash diff)
-passes 100% of mandatory checks; the **bare checkpoint** fails the feature checks and passes
-startup and regression. Record both in `evaluator/tasks/<id>/VALIDATION.md`.
+Public spec (`benchmark/tasks/<id>/spec/feature.md` + `prompt.md`, plus a design image) is written like a
+good issue: where the feature goes, every rule a check depends on (axes, which level is shown, exact texts and
+accessible names), never the reference code.
 
-Public spec (`benchmark/tasks/<id>/spec/feature.md` + `prompt.md`) is written like a good GitHub
-issue plus the API doc: endpoints, params, responses, scopes, visibility rules, the UI entry
-points, and the accessible names the UI must use. It must not paste upstream code.
-
-## 5. Core changes (core stream)
+## 5. Core behaviour
 
 * `runner/tasks.ts`: load and validate the registry, `getTask(id)`, `ensureTaskImage(task)`.
-* `runCodingAgent({ task, ... })`: the task drives image, prompt, spec dir, sandbox resources,
-  extra mounts, limit ceilings, the services start hook, snapshot mode, and `taskId` in run.json and
-  usage records.
+* `runCodingAgent({ task, ... })`: the task drives image, prompt, spec dir, sandbox resources, extra mounts,
+  limit ceilings, the services start hook, snapshot mode, and `taskId` in run.json and usage records.
 * `runBenchmark({ taskId, ... })` → coding run → `evaluateRun({ taskId, ... })` dispatch.
-* Storage migration v5: `runs.task_id` and `experiments.task_id` (default `'todo'`), plus summaries
-  and filters by task. The dashboard shows the task in the experiments table.
-* Research loop: verification and quick runs use `devTask`; holdout = `holdoutTask` (if it equals
-  `devTask`, the old behaviour is the `holdout` suite). The best and promotion are **per dev task**
-  (the best for todo and the best for mastodon-bookmarks are independent), as is the baseline
-  bootstrap.
-* Promotion: `passRate >= task.minPassRate` (todo 1.0, so unchanged) **and** the median coding
-  tokens of all verification runs < the best median. The quick run must pass.
-  `browserAgent: 'none'` tasks are promotable without the LLM browser agent; `'required'` tasks keep
-  the current NO-BROWSER-AGENT rule.
-* Research workspace: for a brownfield dev task, mount a **read-only copy of the checkpoint
-  source** at `/research/codebase` (no node_modules, vendor or .git), so the researcher can build
-  feature maps and codebase guides. Nothing from the holdout task may enter the workspace or the
-  digest.
-* Config surface: add `docs/` (any files, up to 32 KB each and 256 KB in total). They're installed
-  read-only at `/opt/frugal/docs` in the coding container and **not** loaded into context unless
-  the agent reads them. Always-loaded files keep their current limits.
-* **Guard safeguards:**
-  1. **Banned terms:** the union of `bannedTerms` of every non-todo task (dev and holdout). Any
-     config file containing one is rejected (case-insensitive, word-ish match).
-     Bookmarks: `bookmark`. Filters: `custom_filter`, `CustomFilter`, `keyword filter`,
-     `phrase filter`, `filters_controller`.
-  2. **Reference corpus:** every task's `referenceDiffs` (the added lines of the upstream diffs) join
-     the similarity corpus.
-  3. **Human flagging** (`npm run results -- --flag-cheating`) already exists. Keep it working per task.
-* Everything else (gateway, isolation, accounting, the dashboard, the CLIs) keeps working. `todo`
-  tests stay green and the todo numbers are unchanged.
+* Storage: `runs.task_id` and `experiments.task_id` (default `'todo'`), summaries and filters by task.
+* Research loop: verification and quick runs use `devTask`; holdout = `holdoutTask` (if it equals `devTask`,
+  the task's holdout suite). Best and promotion are **per dev task**, as is the baseline bootstrap.
+* Promotion: `passRate >= task.minPassRate` (todo 1.0, tiny-depth 0.8) **and** the median coding tokens of all
+  verification runs < the best median. The quick run must pass. `browserAgent: 'none'` tasks are promotable
+  without the LLM browser agent.
+* Research workspace: for a brownfield dev task, a **read-only copy of the checkpoint source** at
+  `/research/codebase` (no .git, dependencies, caches or build output). Nothing from a holdout task enters the
+  workspace or the digest.
+* Config surface: `docs/` (any files, up to 32 KB each and 256 KB in total), installed read-only at
+  `/opt/frugal/docs`, not loaded into context unless the agent reads them.
+* **Guard safeguards:** banned terms (the union of `bannedTerms` of every non-todo task; tiny-depth:
+  `DepthChart`, `No liquidity`, `levelAt`, `depthView`), the reference corpus (every task's `referenceDiffs`),
+  and human flagging (`npm run results -- --flag-cheating`).
 
-## 6. Ownership
+## 6. Where things live
 
-| Stream | Owns | Must not touch |
-|---|---|---|
-| env | `benchmark/tasks/mastodon-*/docker/**`, `benchmark/tasks/mastodon-*/task.json` (sandbox/image fields), image builder modules, `/opt/frugal/task/*` scripts, reference.diff extraction | runner/researcher/storage internals |
-| core | `runner/**`, `researcher/**`, `storage/**`, `scripts/**`, `dashboard/**`, `evaluator/index.ts` dispatch, `benchmark/tasks/todo/` | Mastodon image internals, hidden checks |
-| checks | `evaluator/tasks/mastodon-*/**`, `benchmark/tasks/mastodon-*/{prompt.md,spec/}`, `task.json` (bannedTerms/minPassRate fields) | runner internals |
+| Area | Files |
+|---|---|
+| tiny images | `benchmark/tasks/tiny/**` (image.ts, build.json, docker/) |
+| tiny-depth public task | `benchmark/tasks/tiny-depth/{task.json,prompt.md,spec/,docker/image.ts}` |
+| shared tiny evaluator | `evaluator/tasks/tiny-common/{evaluate,container,cli}.ts` |
+| tiny-depth hidden checks | `evaluator/tasks/tiny-depth/**` (fixtures, ui-checks, visual, visual/*.png, reference.diff, VALIDATION.md) |
+| core | `runner/**`, `researcher/**`, `storage/**`, `scripts/**`, `dashboard/**`, `evaluator/index.ts` |
 
-Nobody commits; the lead commits. Tests use temp DBs, never `results/benchmark.db`.
+Tests use temp DBs, never `results/benchmark.db`.
 
 ## 7. Interface details fixed during the build (core stream)
 
@@ -184,7 +159,7 @@ These refine §2–§5 without changing their intent.
 * **Container user:** the runner runs and execs as `node` (uid 1000) with `HOME=/home/node` (a tmpfs), and the
   `claude` process gets `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` (plus `/opt/frugal/bin`
   first when the config has bin scripts). So the image needs a user `node` with uid 1000 and `claude` resolvable on
-  that PATH (e.g. a wrapper in `/usr/local/bin` that runs Claude Code with its private node).
+  that PATH (tiny: Claude Code shares the project's Node 22 and is linked into `/usr/local/bin`).
 * **Services hook:** non-todo tasks: right after `docker run` (and the /spec copy) the runner execs
   `/opt/frugal/task/services start` as `node` in `/workspace`, timeout 300 s; non-zero = `infra_error`.
 * **/opt/frugal:** for non-todo tasks the runner mounts tmpfs at `/opt/frugal/bin`, `/opt/frugal/libexec` and
@@ -196,14 +171,14 @@ These refine §2–§5 without changing their intent.
   `--max-tokens-per-run`) can only tighten. The research `maxTokensPerCodingRun` (default 3M) still applies.
 * **Checkpoint for git-diff:** the runner records `git rev-parse HEAD` right after the services hook and diffs
   against that commit (`git add -A -- . <excludes>` then `git diff --cached --binary --no-color --no-ext-diff
-  <sha> -- . <excludes>`, excludes `log tmp node_modules vendor public/packs*`). An empty patch file means "no
+  <sha> -- . <excludes>`, excludes: dependencies, `ui/dist`, caches, `*.sqlite*`, `tmp`; see `GIT_DIFF_EXCLUDES` in runner/snapshot.ts). An empty patch file means "no
   change" and is still evaluated.
 * **evaluateTask options:** `{ runId, patchFile /* absolute */, suite, seed, outDir /* absolute, created */, image
   /* baseImage */, taskId, experimentId? }`. Holdout-task runs (holdoutTask ≠ devTask) are evaluated with suite
   `'holdout'` and stored with phase `holdout`. A thrown error becomes an evaluator-failure result. For
   `browserAgent: 'none'` the dispatcher forces `browserAgentSkipped: false`. Check categories stay in the
-  existing union (`startup | backend | functional | browser | visual`): UI checks use `functional`, upstream and
-  regression specs use `backend` (ids distinguish them).
+  existing union (`startup | backend | functional | browser | visual`): UI checks use `functional`, test-suite
+  runs use `backend`, the screenshot comparison uses `visual` (ids distinguish them).
 * **Research settings:** `holdoutTask` defaults to `devTask` when not set anywhere (so `--dev-task X` alone means
   X's holdout suite). Bests are published to `results/best-config` (todo) and `results/best-config-<task>`.
 * **Banned terms** are read from the raw task.json of every non-todo task (validated or not), so a task under

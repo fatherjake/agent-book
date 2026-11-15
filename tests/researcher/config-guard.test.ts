@@ -225,7 +225,7 @@ describe('guardConfig: legitimate configs PASS', () => {
   });
 
   it('prose skills that paraphrase the requirements', () => {
-    const r = guardConfig({ ...baseFiles(), 'skills/contract-notes.md': legit('requirements-skill.md'), 'skills/fullstack-checklist.md': readFileSync(join(CONFIGS_DIR, 'baseline', 'skills', 'fullstack-checklist.md'), 'utf8') }, opts);
+    const r = guardConfig({ ...baseFiles(), 'skills/contract-notes.md': legit('requirements-skill.md'), 'skills/verification-checklist.md': readFileSync(join(CONFIGS_DIR, 'baseline', 'skills', 'verification-checklist.md'), 'utf8') }, opts);
     expect(formatViolations(r.violations)).toBe('');
   });
 

@@ -12,8 +12,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { ExecResult } from './types.js';
 
-/** Paths never included in workspace.patch (pathspec excludes; `public/packs*` covers packs and packs-test). */
-export const GIT_DIFF_EXCLUDES = ['log', 'tmp', 'node_modules', 'vendor', 'public/packs*'] as const;
+/** Paths never included in workspace.patch (pathspec excludes: dependencies, build output, caches, sim databases). */
+export const GIT_DIFF_EXCLUDES = ['node_modules', 'ui/node_modules', 'ui/dist', '.venv', '__pycache__', '.pytest_cache', '.ruff_cache', '*.sqlite*', 'tmp'] as const;
 
 /** Where the patch is staged inside the container before it is copied out. */
 export const CONTAINER_PATCH_FILE = '/tmp/.frugal-workspace.patch';
@@ -42,7 +42,7 @@ export function gitDiffCommand(base: string): string {
     'set -e',
     'cd /workspace',
     // No exclude pathspecs on `add`: git refuses (exit 1) when one names a gitignored path
-    // (node_modules, tmp, public/packs in Mastodon). `add -A .` skips ignored files anyway; the
+    // (node_modules, ui/dist, .venv). `add -A .` skips ignored files anyway; the
     // excludes on `diff` keep anything else listed out of the patch.
     'git add -A -- .',
     `git diff --cached --binary --no-color --no-ext-diff ${base} -- . ${ex} > ${CONTAINER_PATCH_FILE}`,

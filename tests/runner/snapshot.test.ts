@@ -50,7 +50,7 @@ describe('git-diff snapshot helpers', () => {
     const cmd = gitDiffCommand(SHA);
     expect(cmd).toContain('git add -A -- .');
     expect(cmd).toContain(`git diff --cached --binary --no-color --no-ext-diff ${SHA} -- .`);
-    for (const ex of ['log', 'tmp', 'node_modules', 'vendor', 'public/packs*']) expect(cmd).toContain(`':(exclude)${ex}'`);
+    for (const ex of ['node_modules', 'ui/dist', '.venv', '__pycache__', '*.sqlite*']) expect(cmd).toContain(`':(exclude)${ex}'`);
     expect(cmd).toContain(`> ${CONTAINER_PATCH_FILE}`);
     expect(() => gitDiffCommand('HEAD; rm -rf /')).toThrow(/invalid checkpoint/);
   });
@@ -85,12 +85,12 @@ describe('task-driven coding run (fake sandbox, mock provider)', () => {
   let resultsDir: string;
   beforeEach(() => {
     repo = makeTaskRepo([
-      brownfieldDef('mastodon-x', {
+      brownfieldDef('brownfield-x', {
         limits: { maxRuntimeSec: 3600, maxModelCalls: 400 },
         sandbox: { cpus: 4, memory: '6g', pidsLimit: 2048, extraVolumes: ['/data'], extraTmpfs: ['/run/postgresql:rw,nosuid,size=1m,uid=1000'], shmSize: '512m' },
       }),
     ]);
-    task = loadTaskFromDir(join(repo.tasksDir, 'mastodon-x'), repo.root);
+    task = loadTaskFromDir(join(repo.tasksDir, 'brownfield-x'), repo.root);
     resultsDir = mkdtempSync(join(tmpdir(), 'frugal-res-'));
   });
   afterEach(() => {
@@ -114,7 +114,7 @@ describe('task-driven coding run (fake sandbox, mock provider)', () => {
       },
     });
     expect(r.status).toBe('completed');
-    expect(r.taskId).toBe('mastodon-x');
+    expect(r.taskId).toBe('brownfield-x');
     // Task drives spec dir, sandbox resources, extra mounts and the services hook.
     expect(factoryArgs!.specDir).toBe(task.specPath);
     expect(factoryArgs!.sandbox).toEqual({
@@ -136,8 +136,8 @@ describe('task-driven coding run (fake sandbox, mock provider)', () => {
     const runDir = join(resultsDir, 'runs', r.runId);
     expect(readFileSync(join(runDir, 'workspace.patch'), 'utf8')).toBe(PATCH);
     expect(r.artifacts.workspacePatch!.endsWith(`runs/${r.runId}/workspace.patch`)).toBe(true);
-    expect(JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8')).taskId).toBe('mastodon-x');
-    for (const line of readFileSync(join(runDir, 'usage.jsonl'), 'utf8').trim().split('\n')) expect(JSON.parse(line).taskId).toBe('mastodon-x');
+    expect(JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8')).taskId).toBe('brownfield-x');
+    for (const line of readFileSync(join(runDir, 'usage.jsonl'), 'utf8').trim().split('\n')) expect(JSON.parse(line).taskId).toBe('brownfield-x');
     expect(sb.destroyed).toBe(true);
   });
 

@@ -17,7 +17,7 @@ export const RESULTS_CLI: CommandSpec = {
     { name: 'runs', type: 'boolean', description: 'List individual runs instead of experiments' },
     { name: 'limit', type: 'number', description: 'Show only the last N rows', integer: true, min: 1 },
     { name: 'json', type: 'boolean', description: 'Print JSON instead of tables' },
-    { name: 'task', type: 'string', description: 'Only this benchmark task (e.g. todo, mastodon-bookmarks); best/baseline are per task (default view: todo best, all experiments)' },
+    { name: 'task', type: 'string', description: 'Only this benchmark task (e.g. todo, tiny-depth); best/baseline are per task (default view: todo best, all experiments)' },
     { name: 'db', type: 'string', description: 'SQLite path (default results/benchmark.db or $FRUGAL_DB_PATH)' },
     {
       name: 'flag-cheating',
@@ -34,7 +34,7 @@ export const RESULTS_CLI: CommandSpec = {
     'npm run results -- --experiment exp-0003',
     'npm run results -- --runs --limit 20',
     'npm run results -- --json',
-    'npm run results -- --task mastodon-bookmarks',
+    'npm run results -- --task tiny-depth',
     'npm run results -- --flag-cheating exp-0012 --reason "skill embeds a prebuilt server.js"',
     'npm run results -- --clear-flag exp-0012 --reason "false alarm: the helper only runs curl"',
   ],

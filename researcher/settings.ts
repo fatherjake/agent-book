@@ -66,7 +66,7 @@ export interface ResearchSettings extends ResearchBudgets {
   devTask: string;
   /**
    * Task of the holdout check on promotion. Equal to devTask (the default when not set) = the old behaviour
-   * (the dev task's holdout suite). A different task (e.g. mastodon-filters for dev task mastodon-bookmarks) is never
+   * (the dev task's holdout suite). A different task (e.g. a second tiny-* feature task) is never
    * shown to the research agent: only one pass/fail bit per promoted experiment.
    */
   holdoutTask: string;

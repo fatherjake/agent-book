@@ -24,7 +24,7 @@ export const RESEARCH_CLI: CommandSpec = {
     'Start the autonomous research loop: propose → quick run → verify → promote, within budgets.\n' +
     'Settings: configs/research.json (flags override). Pause by creating results/research.pause; Ctrl-C shuts down gracefully.',
   flags: [
-    { name: 'dev-task', type: 'string', description: "Task the research optimizes (quick/verification/baseline runs; best and promotion are per dev task). Default from settings: 'todo'" },
+    { name: 'dev-task', type: 'string', description: "Task the research optimizes (quick/verification/baseline runs; best and promotion are per dev task). Default from configs/research.json (devTask), else 'todo'" },
     {
       name: 'holdout-task',
       type: 'string',
@@ -89,7 +89,7 @@ export const RESEARCH_CLI: CommandSpec = {
     'npm run research -- --max-experiments 20',
     'npm run research -- --max-total-tokens 50000000 --max-duration 8h',
     'npm run research -- --resume',
-    'npm run research -- --dev-task mastodon-bookmarks --holdout-task mastodon-filters',
+    'npm run research -- --dev-task tiny-depth   # holdout = its holdout suite; --holdout-task <id> for another task',
     'npm run research -- --dry-run',
     'npm run research -- --propose-only --prove-isolation',
     'npm run research -- --provider mock --mock-script reference-app --research-provider mock --max-experiments 2   # infra test',

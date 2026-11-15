@@ -19,7 +19,7 @@ export const BENCHMARK_CLI: CommandSpec = {
   summary: 'Run a coding-agent configuration against a benchmark task (default: the todo app) and evaluate the result.',
   flags: [
     { name: 'config', type: 'string', description: "Config id under configs/ ('baseline' or 'experiments/NNN')", default: 'baseline' },
-    { name: 'task', type: 'string', description: 'Benchmark task id (benchmark/tasks/<id>, e.g. todo, mastodon-bookmarks)', default: 'todo' },
+    { name: 'task', type: 'string', description: 'Benchmark task id (benchmark/tasks/<id>, e.g. todo, tiny-depth)', default: 'todo' },
     { name: 'runs', type: 'number', description: 'Number of runs', default: 1, integer: true, min: 1 },
     { name: 'concurrency', type: 'number', description: 'Runs executed in parallel (each fully isolated)', default: 1, integer: true, min: 1 },
     { name: 'suite', type: 'string', description: 'Evaluation suite', default: 'dev', choices: ['dev', 'holdout'] },
@@ -42,7 +42,7 @@ export const BENCHMARK_CLI: CommandSpec = {
   examples: [
     'npm run benchmark -- --config baseline',
     'npm run benchmark -- --config experiments/001 --runs 3',
-    'npm run benchmark -- --task mastodon-bookmarks --config baseline',
+    'npm run benchmark -- --task tiny-depth --config baseline',
     'npm run benchmark -- --dry-run',
     'npm run benchmark -- --provider mock                              # infra test, trivial file',
     'npm run benchmark -- --provider mock --mock-script reference-app  # infra test, full pipeline',

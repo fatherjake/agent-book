@@ -336,17 +336,17 @@ export function selectRuns(db: Db, bestConfigId: string, experiments: Experiment
 function brownfieldText(task: { id: string; title: string }) {
   return {
     intro: `You are the research agent of a token-efficiency benchmark. A coding agent (the real Claude Code CLI,
-headless \`claude -p\`, inside an isolated container) implements a feature in a large EXISTING codebase
+headless \`claude -p\`, inside an isolated container) implements a feature in an EXISTING codebase
 (task \`${task.id}\`: ${task.title}), following the public task prompt and feature spec in \`spec/\`. A hidden
 evaluator then checks the result. Your job: study what the coding sessions ACTUALLY did and propose ONE
 configuration change that lowers the coding agent's token use while keeping the checks passing.`,
-    scoring: `- A run passes only if ALL mandatory checks pass: the patch applies, migrations run and the app boots,
-  API checks from the public spec, the upstream feature specs, a regression subset of existing specs, and
-  UI checks.`,
+    scoring: `- A run passes only if ALL mandatory checks pass: the patch applies, the project builds, the existing
+  tests still pass, the app boots, the UI checks written from the public spec pass, and the result is visually
+  close enough to the hidden reference implementation (a screenshot comparison).`,
     codebase: `- \`/research/codebase/\` (read-only, in this container only): the checkpoint source the coding agent starts
-  from (no .git, node_modules or vendor). Use it to build codebase maps and guides for \`docs/\` (feature
-  areas, where routes/controllers/serializers/specs/UI components live, how tests run). Guides must describe the
-  EXISTING code and how to work in it; they must not contain the feature's implementation.
+  from (no .git, dependencies or build output). Use it to build codebase maps and guides for \`docs/\` (feature
+  areas, where modules, components, hooks, styles and tests live, how to build and test). Guides must describe
+  the EXISTING code and how to work in it; they must not contain the feature's implementation.
 - \`/workspace\` in this container: a disposable copy of that checkout (dependencies installed, services not
   necessarily running) for smoke-testing helper scripts.`,
   };

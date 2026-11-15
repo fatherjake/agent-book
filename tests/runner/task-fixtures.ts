@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export function brownfieldDef(id = 'mastodon-x', o: Record<string, unknown> = {}): Record<string, unknown> {
+export function brownfieldDef(id = 'brownfield-x', o: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id,
     title: `Fake brownfield task ${id}`,

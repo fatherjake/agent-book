@@ -38,7 +38,7 @@ const UPSTREAM_RUBY = `class Api::V1::Widgets::PinsController < Api::BaseControl
   def set_widget_record
     @widget_record = WidgetRecord.find(params[:widget_record_id])
     authorize @widget_record, :show?
-  rescue Mastodon::NotPermittedError
+  rescue App::NotPermittedError
     not_found
   end
 end

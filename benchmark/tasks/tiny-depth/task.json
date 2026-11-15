@@ -1,0 +1,17 @@
+{
+  "$comment": "Brownfield tiny task (docs/TASKS.md): add a depth chart tab to the order book card of tiny's trading UI. tiny (github.com/fatherjake/tiny) postdates the coding model's training data and the feature exists nowhere public; the reference implementation is only in the hidden evaluator/tasks/tiny-depth/reference.diff. Images are shared by every tiny-* task (benchmark/tasks/tiny/image.ts).",
+  "id": "tiny-depth",
+  "title": "tiny: add a depth chart to the order book card (React + TypeScript)",
+  "kind": "brownfield",
+  "promptFile": "prompt.md",
+  "specDir": "spec",
+  "image": { "builder": "benchmark/tasks/tiny-depth/docker/image.ts" },
+  "workspace": { "path": "/workspace", "snapshot": "git-diff" },
+  "sandbox": { "cpus": 4, "memory": "4g", "pidsLimit": 2048, "shmSize": "512m" },
+  "limits": { "maxRuntimeSec": 2400, "maxModelCalls": 200 },
+  "evaluator": "evaluator/tasks/tiny-depth/index.ts",
+  "browserAgent": "none",
+  "minPassRate": 0.8,
+  "bannedTerms": ["DepthChart", "No liquidity", "levelAt", "depthView"],
+  "referenceDiffs": ["evaluator/tasks/tiny-depth/reference.diff"]
+}

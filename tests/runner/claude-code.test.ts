@@ -170,7 +170,7 @@ describe('claude-code invocation', () => {
   it('skills go to ~/.claude/skills/<name>/SKILL.md with frontmatter; CLAUDE.md to ~/.claude (never /workspace)', () => {
     const files = claudeHomeFiles({ ...base, skills: [...base.skills, { name: 'My Notes', content: '# Speed tips\nBe quick.' }], claudeCode: { systemPromptMode: 'append', claudeMd: true }, claudeMdContent: '# mem' });
     expect(files.map((f) => f.path)).toEqual([
-      '/home/node/.claude/skills/fullstack-checklist/SKILL.md',
+      '/home/node/.claude/skills/verification-checklist/SKILL.md',
       '/home/node/.claude/skills/my-notes/SKILL.md',
       '/home/node/.claude/CLAUDE.md',
     ]);

@@ -7,7 +7,7 @@ import { evaluateRun, type EvaluateTaskOptions } from '../../evaluator/index.js'
 import type { EvaluationResult } from '../../runner/types.js';
 import type { Task } from '../../runner/tasks.js';
 
-const fakeTask = (browserAgent: 'none' | 'required') => ({ id: 'mastodon-x', browserAgent, evaluator: 'evaluator/tasks/mastodon-x/index.ts' }) as unknown as Task;
+const fakeTask = (browserAgent: 'none' | 'required') => ({ id: 'brownfield-x', browserAgent, evaluator: 'evaluator/tasks/brownfield-x/index.ts' }) as unknown as Task;
 
 const fakeResult = (o: EvaluateTaskOptions, passed: boolean): EvaluationResult => ({
   runId: o.runId,
@@ -40,17 +40,17 @@ describe('evaluateRun dispatch by task', () => {
       suite: 'holdout',
       seed: 7,
       outDir: join(dir, 'out'),
-      taskId: 'mastodon-x',
+      taskId: 'brownfield-x',
       experimentId: 'exp-0002',
       skipBrowserAgent: true,
       taskDeps: {
         getTask: () => fakeTask('none'),
         loadEvaluator: async () => async (o) => (calls.push(o), fakeResult(o, true)),
-        ensureTaskImage: async () => ({ baseImage: 'frugal-task-mastodon-x:abc' }),
+        ensureTaskImage: async () => ({ baseImage: 'frugal-task-brownfield-x:abc' }),
       },
     });
     expect(calls).toEqual([
-      { runId: 'run-1', patchFile: join(dir, 'runs', 'run-1', 'workspace.patch'), suite: 'holdout', seed: 7, outDir: join(dir, 'out'), image: 'frugal-task-mastodon-x:abc', taskId: 'mastodon-x', experimentId: 'exp-0002' },
+      { runId: 'run-1', patchFile: join(dir, 'runs', 'run-1', 'workspace.patch'), suite: 'holdout', seed: 7, outDir: join(dir, 'out'), image: 'frugal-task-brownfield-x:abc', taskId: 'brownfield-x', experimentId: 'exp-0002' },
     ]);
     expect(r.passed).toBe(true);
     // browserAgent 'none': complete (promotable) even with skipBrowserAgent.
@@ -65,7 +65,7 @@ describe('evaluateRun dispatch by task', () => {
       suite: 'dev',
       seed: 1,
       outDir: join(dir, 'out2'),
-      taskId: 'mastodon-x',
+      taskId: 'brownfield-x',
       skipBrowserAgent: true,
       image: 'img:1',
       taskDeps: { getTask: () => fakeTask('required'), loadEvaluator: async () => async (o) => fakeResult(o, true) },
@@ -80,12 +80,12 @@ describe('evaluateRun dispatch by task', () => {
       suite: 'dev',
       seed: 1,
       outDir: join(dir, 'out3'),
-      taskId: 'mastodon-x',
+      taskId: 'brownfield-x',
       image: 'img:1',
       taskDeps: {
         getTask: () => fakeTask('none'),
         loadEvaluator: async () => {
-          throw new Error('evaluator/tasks/mastodon-x/index.ts does not export evaluateTask()');
+          throw new Error('evaluator/tasks/brownfield-x/index.ts does not export evaluateTask()');
         },
       },
     });
@@ -93,6 +93,6 @@ describe('evaluateRun dispatch by task', () => {
     expect(r.evaluatorFailure).toBe(true);
     expect(r.checks[0].outcome).toBe('error');
     expect(existsSync(join(dir, 'out3', 'report.json'))).toBe(true);
-    expect(JSON.parse(readFileSync(join(dir, 'out3', 'report.json'), 'utf8')).taskId).toBe('mastodon-x');
+    expect(JSON.parse(readFileSync(join(dir, 'out3', 'report.json'), 'utf8')).taskId).toBe('brownfield-x');
   });
 });

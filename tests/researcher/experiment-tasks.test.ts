@@ -41,15 +41,15 @@ describe('runBenchmark with a task (fake deps)', () => {
         return fakeEval({ runId: o.runId, passed: true });
       },
     };
-    const res = await runBenchmark({ configId: 'baseline', runs: 2, taskId: 'mastodon-x', phase: 'verify', experimentId: 'exp-9', db, deps });
+    const res = await runBenchmark({ configId: 'baseline', runs: 2, taskId: 'brownfield-x', phase: 'verify', experimentId: 'exp-9', db, deps });
     expect(res.every((r) => r.passed)).toBe(true);
-    expect(coded.map((c) => c.task)).toEqual(['mastodon-x', 'mastodon-x']);
-    expect(evaluated.map((e) => [e.taskId, e.patchFile, e.experimentId])).toEqual(res.map((r) => ['mastodon-x', join(dir, 'runs', r.coding.runId, 'workspace.patch'), 'exp-9']));
+    expect(coded.map((c) => c.task)).toEqual(['brownfield-x', 'brownfield-x']);
+    expect(evaluated.map((e) => [e.taskId, e.patchFile, e.experimentId])).toEqual(res.map((r) => ['brownfield-x', join(dir, 'runs', r.coding.runId, 'workspace.patch'), 'exp-9']));
     expect(evaluated[0].outDir).toBe(join(dir, 'runs', res[0].coding.runId, 'eval', 'dev'));
-    expect(db.listRuns({ taskId: 'mastodon-x' })).toHaveLength(2);
+    expect(db.listRuns({ taskId: 'brownfield-x' })).toHaveLength(2);
     expect(db.listArtifacts().some((a) => a.kind === 'workspace-patch')).toBe(true);
     // Seeds differ per task; todo keeps its original seed keys.
-    expect(coded[0].seed).toBe(deterministicSeed('exp-9:verify:dev:0:mastodon-x'));
+    expect(coded[0].seed).toBe(deterministicSeed('exp-9:verify:dev:0:brownfield-x'));
   });
 
   it('todo: no task option reaches the runner or evaluator (unchanged call shape and seeds)', async () => {

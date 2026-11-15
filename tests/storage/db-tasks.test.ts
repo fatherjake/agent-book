@@ -60,7 +60,7 @@ describe('storage schema v5 (tasks)', () => {
     expect(db.getExperiment('exp-0001')!.taskId).toBe('todo');
     expect(db.getBestVerified()!.configId).toBe('baseline');
     expect(db.getBestVerified('todo')!.taskId).toBe('todo');
-    expect(db.getBestVerified('mastodon-bookmarks')).toBeNull();
+    expect(db.getBestVerified('tiny-depth')).toBeNull();
     expect(db.listTaskIds()).toEqual(['todo']);
     expect(() => db.raw.prepare(`DELETE FROM runs`).run()).toThrow(/append-only/);
     expect(() => db.raw.prepare(`UPDATE best_history SET task_id = 'x'`).run()).toThrow(/immutable/);
@@ -79,11 +79,11 @@ describe('storage schema v5 (tasks)', () => {
     expect(db.schemaVersion()).toBe(4);
     expect(db.getBestVerified()!.configId).toBe('baseline');
     expect(db.listRuns({ taskId: 'todo' })).toHaveLength(1);
-    expect(db.listRuns({ taskId: 'mastodon-bookmarks' })).toHaveLength(0);
-    expect(db.listExperiments({ taskId: 'mastodon-bookmarks' })).toHaveLength(0);
-    expect(db.getBestVerified('mastodon-bookmarks')).toBeNull();
+    expect(db.listRuns({ taskId: 'tiny-depth' })).toHaveLength(0);
+    expect(db.listExperiments({ taskId: 'tiny-depth' })).toHaveLength(0);
+    expect(db.getBestVerified('tiny-depth')).toBeNull();
     expect(db.listExperimentsWithAggregates()[0].taskId).toBe('todo');
-    expect(db.getOverview('mastodon-bookmarks').runsTotal).toBe(0);
+    expect(db.getOverview('tiny-depth').runsTotal).toBe(0);
     db.close();
   });
 
@@ -91,42 +91,42 @@ describe('storage schema v5 (tasks)', () => {
     const db = openDb(':memory:');
     for (const id of ['baseline', 'experiments/001', 'experiments/002']) db.ensureConfig({ configId: id, hash: id, parentId: null, path: id, hypothesis: null });
     const t = db.insertExperiment({ kind: 'baseline', parentConfigId: null, candidateConfigId: 'baseline', hypothesis: 'b', provider: 'p', model: 'm', status: 'verifying' });
-    const m = db.insertExperiment({ kind: 'baseline', parentConfigId: null, candidateConfigId: 'baseline', hypothesis: 'b', provider: 'p', model: 'm', status: 'verifying', taskId: 'mastodon-bookmarks' });
+    const m = db.insertExperiment({ kind: 'baseline', parentConfigId: null, candidateConfigId: 'baseline', hypothesis: 'b', provider: 'p', model: 'm', status: 'verifying', taskId: 'tiny-depth' });
     db.updateExperiment(t.id, { summary: summary(1000), status: 'completed', outcome: 'baseline' });
     db.updateExperiment(m.id, { summary: summary(90000), status: 'completed', outcome: 'baseline' });
     db.recordPromotion({ experimentId: t.id, configId: 'baseline', summary: summary(1000) });
     // The same config can be the best of another task; taskId comes from the experiment.
     const bm = db.recordPromotion({ experimentId: m.id, configId: 'baseline', summary: summary(90000) });
-    expect(bm.taskId).toBe('mastodon-bookmarks');
+    expect(bm.taskId).toBe('tiny-depth');
     expect(bm.previousConfigId).toBeNull(); // no earlier best for this task
     expect(db.getBestVerified()!.medianTokens).toBe(1000);
-    expect(db.getBestVerified('mastodon-bookmarks')!.medianTokens).toBe(90000);
+    expect(db.getBestVerified('tiny-depth')!.medianTokens).toBe(90000);
 
-    const c = db.insertExperiment({ kind: 'candidate', parentConfigId: 'baseline', candidateConfigId: 'experiments/001', hypothesis: 'h', provider: 'p', model: 'm', status: 'verifying', taskId: 'mastodon-bookmarks' });
-    db.insertRunStart({ runId: 'm1', experimentId: c.id, configId: 'experiments/001', seed: 1, phase: 'verify', suite: 'dev', taskId: 'mastodon-bookmarks' });
-    db.finishRun('m1', { ...fakeCoding({ runId: 'm1', configId: 'experiments/001', tokens: 60000 }), taskId: 'mastodon-bookmarks' }, true);
+    const c = db.insertExperiment({ kind: 'candidate', parentConfigId: 'baseline', candidateConfigId: 'experiments/001', hypothesis: 'h', provider: 'p', model: 'm', status: 'verifying', taskId: 'tiny-depth' });
+    db.insertRunStart({ runId: 'm1', experimentId: c.id, configId: 'experiments/001', seed: 1, phase: 'verify', suite: 'dev', taskId: 'tiny-depth' });
+    db.finishRun('m1', { ...fakeCoding({ runId: 'm1', configId: 'experiments/001', tokens: 60000 }), taskId: 'tiny-depth' }, true);
     const e2 = db.recordPromotion({ experimentId: c.id, configId: 'experiments/001', summary: summary(60000) });
     expect(e2.previousConfigId).toBe('baseline');
     expect(e2.previousMedianTokens).toBe(90000);
     expect(db.getBestVerified()!.configId).toBe('baseline'); // todo untouched
-    expect(db.getBestHistory('mastodon-bookmarks').map((b) => b.configId)).toEqual(['baseline', 'experiments/001']);
+    expect(db.getBestHistory('tiny-depth').map((b) => b.configId)).toEqual(['baseline', 'experiments/001']);
     expect(db.getBestHistory('todo')).toHaveLength(1);
 
-    expect(db.listTaskIds()).toEqual(['todo', 'mastodon-bookmarks']);
-    expect(db.listExperiments({ taskId: 'mastodon-bookmarks' }).map((e) => e.id)).toEqual([m.id, c.id]);
-    expect(db.listRuns({ taskId: 'mastodon-bookmarks' }).map((r) => r.runId)).toEqual(['m1']);
+    expect(db.listTaskIds()).toEqual(['todo', 'tiny-depth']);
+    expect(db.listExperiments({ taskId: 'tiny-depth' }).map((e) => e.id)).toEqual([m.id, c.id]);
+    expect(db.listRuns({ taskId: 'tiny-depth' }).map((r) => r.runId)).toEqual(['m1']);
     expect(db.listRuns({ taskId: 'todo' })).toHaveLength(0);
     // Improvement is computed against the best of each experiment's own task.
     const rows = db.listExperimentsWithAggregates();
     expect(rows.find((r) => r.id === c.id)!.improvementVsBestPct).toBe(0);
     // Overview: best and baseline of the requested task.
     expect(db.getOverview().best!.configId).toBe('baseline');
-    const om = db.getOverview('mastodon-bookmarks');
+    const om = db.getOverview('tiny-depth');
     expect(om.best!.configId).toBe('experiments/001');
     expect(om.baseline!.medianTokens).toBe(90000);
     expect(om.experimentsTotal).toBe(2);
     expect(om.runsTotal).toBe(1);
-    expect(db.getPassRateByConfig('mastodon-bookmarks').map((r) => r.configId)).toEqual(['experiments/001']);
+    expect(db.getPassRateByConfig('tiny-depth').map((r) => r.configId)).toEqual(['experiments/001']);
     expect(db.getTokensVsQuality('todo')).toHaveLength(0);
     db.close();
   });

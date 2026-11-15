@@ -12,6 +12,7 @@
     "maxRuns": 12,
     "maxRunMB": 40
   },
+  "devTask": "tiny-depth",
   "codingProvider": null,
   "maxExperiments": 20,
   "maxTotalTokens": null,

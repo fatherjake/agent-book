@@ -112,7 +112,7 @@ describe('optimizer: claude-code surface + guard', () => {
     const cfg = loadConfigFromDir(r.dir, r.configId);
     expect(cfg.bin!.map((b) => b.name)).toEqual(['check', 'smoke', 'trim-output']);
     expect(cfg.agents!.map((a) => a.name)).toEqual(['api-reviewer']);
-    expect(Object.keys(readConfigFiles(r.configId, configs))).toEqual(expect.arrayContaining(['bin/check', 'agents/api-reviewer.md', 'config.json', 'skills/fullstack-checklist.md']));
+    expect(Object.keys(readConfigFiles(r.configId, configs))).toEqual(expect.arrayContaining(['bin/check', 'agents/api-reviewer.md', 'config.json', 'skills/verification-checklist.md']));
     expect(r.diff).toContain('+++ b/bin/check');
     // deleting a bin script that a hook still references fails the runner's validation
     expect(() =>
