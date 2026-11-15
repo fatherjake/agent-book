@@ -17,6 +17,7 @@ const COLUMNS: { key: Key; label: string; num?: boolean }[] = [
   { key: 'medianTokens', label: 'Tokens (median)', num: true },
   { key: 'costUsd', label: 'API-equiv. cost', num: true },
   { key: 'medianDurationMs', label: 'Runtime', num: true },
+  { key: 'totalMs', label: 'Total time', num: true },
   { key: 'visualScore', label: 'Visual', num: true },
   { key: 'improvementVsBestPct', label: 'vs best', num: true },
 ];
@@ -126,6 +127,7 @@ export function ExperimentsSection() {
                       <td className="num">{fmtTokens(r.medianTokens)}</td>
                       <td className="num">{fmtUsd(r.costUsd)}</td>
                       <td className="num">{fmtDuration(r.medianDurationMs)}</td>
+                      <td className="num" title="Whole experiment: proposal, all runs, evaluations and holdout">{fmtDuration(r.totalMs)}</td>
                       <td className="num">{fmtScore(r.visualScore)}</td>
                       <td className={'num ' + (r.improvementVsBestPct === null || r.passed !== true ? 'ds-muted' : r.improvementVsBestPct >= 0 ? 'ds-pos' : 'ds-neg')}>
                         {r.improvementVsBestPct === 0 ? 'best' : fmtPct(r.improvementVsBestPct, true)}

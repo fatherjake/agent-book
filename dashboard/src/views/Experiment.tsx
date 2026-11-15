@@ -64,7 +64,7 @@ export function ExperimentView({ id }: { id: string }) {
               <Stat label="Model" value={e.model} sub={e.provider} />
               <Stat label="Pass rate" value={e.passRate === null ? '—' : fmtPct(e.passRate * 100)} sub={`${e.passes}/${e.runs} runs passed`} />
               <Stat label="Median tokens" value={fmtTokens(e.medianTokens)} sub={e.improvementVsBestPct === null ? undefined : `${fmtPct(e.improvementVsBestPct, true)} fewer tokens than best`} />
-              <Stat label="API-equiv. cost" value={fmtUsd(e.costUsd)} sub={`median runtime ${fmtDuration(e.medianDurationMs)}`} />
+              <Stat label="API-equiv. cost" value={fmtUsd(e.costUsd)} sub={`median runtime ${fmtDuration(e.medianDurationMs)} · total ${fmtDuration(e.totalMs)}`} />
               <Stat label="Visual score" value={fmtScore(e.visualScore)} sub={<>created <Ago iso={e.createdAt} /></>} />
             </div>
 

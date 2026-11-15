@@ -205,11 +205,20 @@ export function createDashboardData(opts: DataOptions): DashboardData {
       medianTokens: tokens,
       costUsd: e.totalCostUsd,
       medianDurationMs: medianOf(st.wallMs),
+      totalMs: experimentWallMs(e),
       visualScore: e.medianVisualScore ?? (e.summary?.medianVisualScore || null),
       improvementVsBestPct: improvement,
       isMock: e.anyMock,
       cheating: e.cheating ? { reason: e.cheating.reason, flaggedAt: e.cheating.flaggedAt, inheritedFrom: e.cheating.inherited ? e.cheating.flaggedConfigId : null } : null,
     };
+  }
+
+  /** Experiment wall clock: created → finished; still active → now; ended without a finish time → unknown. */
+  function experimentWallMs(e: { createdAt: string; finishedAt: string | null; status: string }): number | null {
+    const start = Date.parse(e.createdAt);
+    if (!Number.isFinite(start)) return null;
+    const end = e.finishedAt ? Date.parse(e.finishedAt) : ['pending', 'running', 'verifying'].includes(e.status) ? Date.now() : NaN;
+    return Number.isFinite(end) && end >= start ? end - start : null;
   }
 
   function runRow(r: DbRunRow, evals?: EvaluationRow[]): RunRow {

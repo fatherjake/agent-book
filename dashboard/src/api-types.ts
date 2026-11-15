@@ -64,6 +64,11 @@ export interface ExperimentRow {
   costUsd: number;
   /** Median wall clock per run: coding start → end of evaluation. */
   medianDurationMs: number | null;
+  /**
+   * Wall clock of the whole experiment: created (before the research agent's proposal) → finished, covering
+   * the proposal, quick run, verification runs, evaluations and holdout. Still running: up to now.
+   */
+  totalMs: number | null;
   visualScore: number | null;
   /** (bestTokens - medianTokens) / bestTokens * 100 vs the best of the experiment's own task; positive = fewer tokens than the best. */
   improvementVsBestPct: number | null;
