@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { enc, useApi } from '../api';
 import type { EvaluationView, RunDetail, TokenBreakdownRow } from '../api-types';
-import { Card, LoadState, MockBadge, NoBrowserBadge, PassBadge, Stat } from '../components';
+import { Ago, Card, LoadState, MockBadge, PassBadge, Stat } from '../components';
 import { TraceViewer } from '../TraceViewer';
 import { TokenProfile } from '../TokenProfile';
 import { fmtDate, fmtDuration, fmtInt, fmtScore, fmtTokens, fmtUsd } from '../format';
@@ -188,15 +188,18 @@ export function RunPanel({ id }: { id: string }) {
                 <MockBadge /> Mock-provider run: tokens are synthetic.
               </div>
             )}
-            {r.noBrowserAgent && (
-              <div className="mock-banner">
-                <NoBrowserBadge /> Browser-agent scenarios were skipped: incomplete evaluation, never eligible for promotion.
-              </div>
-            )}
             <div className="stats">
               <Stat label="Status" value={r.status} sub={<PassBadge passed={r.passed} />} />
               <Stat label="Coding tokens" value={fmtTokens(r.totalTokens)} sub={fmtUsd(r.costUsd)} />
-              <Stat label="Runtime" value={fmtDuration(r.durationMs)} sub={`${fmtDate(r.startedAt)}`} />
+              <Stat
+                label="Runtime"
+                value={fmtDuration(r.durationMs)}
+                sub={
+                  <>
+                    coding {fmtDuration(r.codingMs)} + evaluation {fmtDuration(r.durationMs !== null && r.codingMs !== null ? r.durationMs - r.codingMs : null)} · started <Ago iso={r.startedAt} />
+                  </>
+                }
+              />
               <Stat label="Tool calls" value={r.toolCalls ?? '—'} sub={`seed ${r.seed ?? '—'}`} />
               <Stat label="Image" value={<span className="mono small">{r.imageId ? r.imageId.slice(0, 19) : '—'}</span>} sub={r.starterHash ? `starter ${r.starterHash.slice(0, 12)}` : undefined} />
             </div>
@@ -288,7 +291,7 @@ export function RunView({ id }: { id: string }) {
   return (
     <>
       <div className="crumbs">
-        <a href="#/experiments">Experiments</a> / {expId ? <a href={`#/experiments/${expId}`}>{expId}</a> : 'no experiment'} / {id}
+        <a href="#/">Experiments</a> / {expId ? <a href={`#/experiments/${expId}`}>{expId}</a> : 'no experiment'} / {id}
       </div>
       <h1>
         Run <span className="mono">{id}</span>

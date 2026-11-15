@@ -99,18 +99,43 @@ export function createDashboardData(opts: DataOptions): DashboardData {
     return !e.cheating && Boolean(e.summary?.meetsQualityRequirements) && (e.summary?.runs ?? 0) > 1 && (e.outcome === null || VERIFIED_OUTCOMES.has(e.outcome));
   }
 
-  /** Finished-run counts per experiment (all phases), from storage's listRuns(). */
-  function runStats(): Map<string, { runs: number; passes: number }> {
-    const m = new Map<string, { runs: number; passes: number }>();
+  /**
+   * Wall-clock time of one run: coding start → end of its evaluation (or of coding when it was never
+   * evaluated). runs.duration_ms only covers the coding agent (~40s); evaluation adds minutes.
+   */
+  function runWallMs(r: DbRunRow, evals?: EvaluationRow[]): number | null {
+    const start = Date.parse(r.startedAt ?? '');
+    if (!Number.isFinite(start)) return r.durationMs ?? null;
+    const ends = [r.finishedAt, ...(evals ?? db.listEvaluations(r.runId)).map((e) => e.finishedAt)]
+      .map((t) => Date.parse(t ?? ''))
+      .filter((t) => Number.isFinite(t));
+    return ends.length ? Math.max(...ends) - start : (r.durationMs ?? null);
+  }
+
+  const medianOf = (xs: number[]): number | null => {
+    if (!xs.length) return null;
+    const a = [...xs].sort((x, y) => x - y);
+    const mid = Math.floor(a.length / 2);
+    return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
+  };
+
+  /** Finished-run counts and wall times per experiment (all phases), from storage's listRuns(). */
+  function runStats(): Map<string, { runs: number; passes: number; wallMs: number[] }> {
+    const m = new Map<string, { runs: number; passes: number; wallMs: number[] }>();
     for (const r of db.listRuns()) {
       if (!r.experimentId || r.status === 'running') continue;
-      const g = m.get(r.experimentId) ?? { runs: 0, passes: 0 };
+      const g = m.get(r.experimentId) ?? { runs: 0, passes: 0, wallMs: [] };
       g.runs++;
       if (r.passed) g.passes++;
+      const w = runWallMs(r);
+      if (w !== null) g.wallMs.push(w);
       m.set(r.experimentId, g);
     }
     return m;
   }
+
+  /** Experiments evaluated without the LLM browser agent are leftovers of infra tests; the UI hides them. */
+  const visible = (list: ExperimentListItem[]) => list.filter((e) => !e.anyBrowserAgentSkipped);
 
   function configSummary(e: ExperimentListItem, verified: boolean): ConfigSummary {
     return {
@@ -141,7 +166,7 @@ export function createDashboardData(opts: DataOptions): DashboardData {
   interface RowCtx {
     realBest: number | null;
     mockBest: number | null;
-    stats: Map<string, { runs: number; passes: number }>;
+    stats: Map<string, { runs: number; passes: number; wallMs: number[] }>;
   }
 
   function rowCtx(list: ExperimentListItem[]): RowCtx {
@@ -155,7 +180,7 @@ export function createDashboardData(opts: DataOptions): DashboardData {
     const ref = ctx.realBest ?? (e.anyMock ? ctx.mockBest : null);
     let improvement = tokens !== null && ref ? ((ref - tokens) / ref) * 100 : null;
     if (improvement !== null && Math.abs(improvement) < 1e-9) improvement = 0;
-    const st = ctx.stats.get(e.id) ?? { runs: 0, passes: 0 };
+    const st = ctx.stats.get(e.id) ?? { runs: 0, passes: 0, wallMs: [] };
     return {
       id: e.id,
       createdAt: e.createdAt,
@@ -172,11 +197,10 @@ export function createDashboardData(opts: DataOptions): DashboardData {
       passRate: st.runs ? st.passes / st.runs : null,
       medianTokens: tokens,
       costUsd: e.totalCostUsd,
-      medianDurationMs: e.summary?.medianDurationMs ?? e.medianDurationMs,
+      medianDurationMs: medianOf(st.wallMs),
       visualScore: e.medianVisualScore ?? (e.summary?.medianVisualScore || null),
       improvementVsBestPct: improvement,
       isMock: e.anyMock,
-      noBrowserAgent: e.anyBrowserAgentSkipped,
       cheating: e.cheating ? { reason: e.cheating.reason, flaggedAt: e.cheating.flaggedAt, inheritedFrom: e.cheating.inherited ? e.cheating.flaggedConfigId : null } : null,
     };
   }
@@ -192,7 +216,8 @@ export function createDashboardData(opts: DataOptions): DashboardData {
       passed: r.passed,
       startedAt: r.startedAt,
       finishedAt: r.finishedAt,
-      durationMs: r.durationMs,
+      durationMs: runWallMs(r, evals ?? db.listEvaluations(r.runId)),
+      codingMs: r.durationMs,
       totalTokens: r.totalTokens,
       costUsd: r.costUsd,
       toolCalls: r.toolCalls,
@@ -201,7 +226,6 @@ export function createDashboardData(opts: DataOptions): DashboardData {
       imageId: r.imageId,
       starterHash: r.starterHash,
       isMock: r.usedMockProvider,
-      noBrowserAgent: ev?.browserAgentSkipped ?? false,
     };
   }
 
@@ -313,7 +337,7 @@ export function createDashboardData(opts: DataOptions): DashboardData {
     },
 
     experiments(): ExperimentRow[] {
-      const list = db.listExperimentsWithAggregates();
+      const list = visible(db.listExperimentsWithAggregates());
       const ctx = rowCtx(list);
       return list.map((e) => toRow(e, ctx));
     },
@@ -444,7 +468,7 @@ export function createDashboardData(opts: DataOptions): DashboardData {
     },
 
     charts(): Charts {
-      const list = db.listExperimentsWithAggregates();
+      const list = visible(db.listExperimentsWithAggregates());
       const history = db.getBestHistory();
       const useMock = history.length === 0 && list.some((e) => e.anyMock);
       let runningBest: number | null = null;

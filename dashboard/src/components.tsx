@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { fmtAgo, fmtDate } from './format';
 import type { Loadable } from './api';
 
 export function MockBadge({ show = true, title }: { show?: boolean; title?: string }) {
@@ -13,17 +14,8 @@ export function MockBadge({ show = true, title }: { show?: boolean; title?: stri
 export function CheatingBadge({ cheating }: { cheating: { reason: string; inheritedFrom: string | null } | null | undefined }) {
   if (!cheating) return null;
   return (
-    <span className="badge fail" title={`Flagged as cheating${cheating.inheritedFrom ? ` (inherited from ${cheating.inheritedFrom})` : ''}: ${cheating.reason}`}>
+    <span className="badge neg-solid" title={`Flagged as cheating${cheating.inheritedFrom ? ` (inherited from ${cheating.inheritedFrom})` : ''}: ${cheating.reason}`}>
       cheating
-    </span>
-  );
-}
-
-export function NoBrowserBadge({ show = true }: { show?: boolean }) {
-  if (!show) return null;
-  return (
-    <span className="badge mock" title="Evaluated without the LLM browser agent: incomplete evaluation, never eligible for promotion">
-      [NO-BROWSER-AGENT]
     </span>
   );
 }
@@ -40,16 +32,18 @@ export function OutcomeBadge({ outcome }: { outcome: string | null | undefined }
       ? 'pass'
       : outcome === 'not_better'
         ? 'neutral'
-        : outcome === 'error' || outcome.startsWith('failed') || outcome === 'fail' || outcome === 'flagged_cheating'
-          ? 'fail'
-          : 'neutral';
+        : outcome === 'flagged_cheating'
+          ? 'neg-solid'
+          : outcome === 'error' || outcome.startsWith('failed') || outcome === 'fail'
+            ? 'fail'
+            : 'neutral';
   return <span className={'badge ' + cls}>{outcome.replace(/_/g, ' ')}</span>;
 }
 
 export function Card({ title, children, className }: { title?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={'card ' + (className ?? '')}>
-      {title && <h2>{title}</h2>}
+    <section className={'ds-panel card ' + (className ?? '')}>
+      {title && <h2 className="ds-panel__title">{title}</h2>}
       {children}
     </section>
   );
@@ -57,21 +51,47 @@ export function Card({ title, children, className }: { title?: ReactNode; childr
 
 export function Stat({ label, value, sub }: { label: ReactNode; value: ReactNode; sub?: ReactNode }) {
   return (
-    <div className="stat">
-      <div className="stat-label">{label}</div>
-      <div className="stat-value">{value}</div>
-      {sub && <div className="stat-sub">{sub}</div>}
+    <div className="ds-metric">
+      <div className="ds-metric__label">{label}</div>
+      {/* Numbers use the 24px mono metric value; words (a model id, a status) drop to 15px so they don't wrap. */}
+      <div className={'ds-metric__value' + (typeof value === 'string' && /[A-Za-z]{2,}/.test(value) ? ' text' : '')}>{value}</div>
+      {sub && <div className="ds-metric__sub">{sub}</div>}
     </div>
   );
 }
 
 export function LoadState<T>({ state, children }: { state: Loadable<T>; children: (data: T) => ReactNode }) {
-  if (state.loading) return <div className="muted pad">Loading…</div>;
+  if (state.loading) return <div className="ds-empty">Loading…</div>;
   if (state.error) return <div className="error-box">Failed to load: {state.error}</div>;
-  if (!state.data) return <div className="muted pad">No data.</div>;
+  if (!state.data) return <div className="ds-empty">Nothing has been recorded yet.</div>;
   return <>{children(state.data)}</>;
 }
 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
+}
+
+/** One shared 1s clock so every relative time on the page ticks together. */
+const listeners = new Set<(n: number) => void>();
+let timer: ReturnType<typeof setInterval> | null = null;
+function useNow(): number {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    listeners.add(setNow);
+    if (!timer) timer = setInterval(() => listeners.forEach((l) => l(Date.now())), 1000);
+    return () => {
+      listeners.delete(setNow);
+      if (!listeners.size && timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+  }, []);
+  return now;
+}
+
+/** Relative timestamp ("20m ago") with the exact UTC time on hover. */
+export function Ago({ iso }: { iso: string | null | undefined }) {
+  const now = useNow();
+  return <time dateTime={iso ?? undefined} title={fmtDate(iso)}>{fmtAgo(iso, now)}</time>;
 }

@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useHashPath } from './api';
-import { OverviewView } from './views/Overview';
-import { HistoryView } from './views/History';
-import { ChartsView } from './views/ChartsView';
+import { HomeView } from './views/Home';
 import { ExperimentView } from './views/Experiment';
 import { RunView } from './views/Run';
 
@@ -35,41 +33,35 @@ export function App() {
 
   const seg = path.split('/').filter(Boolean);
   let view;
-  let active = 'overview';
-  if (seg[0] === 'experiments' && seg[1]) {
-    view = <ExperimentView id={seg.slice(1).join('/')} />;
-    active = 'experiments';
-  } else if (seg[0] === 'experiments') {
-    view = <HistoryView />;
-    active = 'experiments';
-  } else if (seg[0] === 'runs' && seg[1]) {
-    view = <RunView id={seg.slice(1).join('/')} />;
-    active = 'experiments';
-  } else if (seg[0] === 'charts') {
-    view = <ChartsView />;
-    active = 'charts';
-  } else {
-    view = <OverviewView />;
-  }
+  if (seg[0] === 'experiments' && seg[1]) view = <ExperimentView id={seg.slice(1).join('/')} />;
+  else if (seg[0] === 'runs' && seg[1]) view = <RunView id={seg.slice(1).join('/')} />;
+  else view = <HomeView />; // '#/', and the old '#/experiments' and '#/charts' links
 
   const nextTheme: Record<Theme, Theme> = { auto: 'light', light: 'dark', dark: 'auto' };
   return (
-    <div className="shell">
-      <header className="topbar">
-        <a className="brand" href="#/">
-          Frugal <span className="muted">token benchmark</span>
-        </a>
-        <nav>
-          <a className={active === 'overview' ? 'active' : ''} href="#/">Overview</a>
-          <a className={active === 'experiments' ? 'active' : ''} href="#/experiments">Experiments</a>
-          <a className={active === 'charts' ? 'active' : ''} href="#/charts">Charts</a>
-        </nav>
-        <button className="theme-btn" onClick={() => setTheme(nextTheme[theme])} title="Toggle theme">
-          Theme: {theme}
-        </button>
+    <>
+      <header className="ds-header">
+        <div className="ds-header__inner">
+          <div className="ds-header__left">
+            <a className="ds-brand" href="#/">
+              Frugal
+            </a>
+            <nav className="ds-nav">
+              <a href="#/" aria-current={seg.length === 0 || seg[0] === 'experiments' || seg[0] === 'charts' || seg[0] === 'runs' ? 'page' : undefined}>
+                Experiments
+              </a>
+            </nav>
+          </div>
+          <div className="ds-header__meta">
+            <span className="ds-truncate">token benchmark · read-only</span>
+            <button className="ds-link--quiet" type="button" onClick={() => setTheme(nextTheme[theme])} title="Toggle theme">
+              Theme: {theme}
+            </button>
+          </div>
+        </div>
       </header>
-      <main>{view}</main>
-      <footer className="muted small">Read-only view of results/. Refresh to update.</footer>
-    </div>
+      <main className="ds-main">{view}</main>
+      <footer className="ds-footer ds-caption">Read-only view of results/. Refresh to update.</footer>
+    </>
   );
 }

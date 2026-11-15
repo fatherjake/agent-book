@@ -4,6 +4,7 @@
  * Token counts per call are exact (gateway usage records); tool-output tokens are estimates (chars/4).
  */
 import { useState } from 'react';
+import { CHART_H, useWidth } from './charts';
 import { useApi } from './api';
 import type { SessionProfileView } from './api-types';
 import { fmtInt, fmtTokens } from './format';
@@ -25,9 +26,9 @@ function niceMax(v: number): number {
 
 function CallBars({ calls, overhead }: { calls: Call[]; overhead: number | null }) {
   const [hover, setHover] = useState<number | null>(null);
-  const W = 640;
-  const H = 240;
-  const M = { top: 12, right: 12, bottom: 32, left: 56 };
+  const [ref, W] = useWidth<HTMLDivElement>();
+  const H = CHART_H;
+  const M = { top: 12, right: 12, bottom: 24, left: 56 };
   const IW = W - M.left - M.right;
   const IH = H - M.top - M.bottom;
   const max = niceMax(Math.max(...calls.map((c) => c.totalTokens), 1));
@@ -38,8 +39,9 @@ function CallBars({ calls, overhead }: { calls: Call[]; overhead: number | null 
   const labelEvery = Math.ceil(calls.length / 20);
   const h = hover === null ? null : calls[hover];
   return (
-    <div className="chart">
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Tokens per model call, stacked by kind">
+    <>
+    <div className="chart" ref={ref}>
+      <svg width={W} height={H} role="img" aria-label="Tokens per model call, stacked by kind">
         <g transform={`translate(${M.left},${M.top})`}>
           {ticks.map((t) => (
             <g key={t}>
@@ -49,13 +51,15 @@ function CallBars({ calls, overhead }: { calls: Call[]; overhead: number | null 
               </text>
             </g>
           ))}
+          <line className="axis" x1={0} x2={0} y1={0} y2={IH} />
           <line className="axis" x1={0} x2={IW} y1={IH} y2={IH} />
+          {hover !== null && <rect className="cursor" x={hover * slot} y={0} width={slot} height={IH} />}
           {calls.map((c, i) => {
             const x = i * slot + (slot - bw) / 2;
             let acc = 0;
             return (
               <g key={c.index} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} className={hover === i ? 'bar-group hover' : 'bar-group'}>
-                <rect x={i * slot} y={0} width={slot} height={IH} fill="transparent" />
+                <rect className="hit" x={i * slot} y={0} width={slot} height={IH} />
                 {SEGMENTS.map((s) => {
                   const v = c[s.key];
                   if (!v) return null;
@@ -85,13 +89,10 @@ function CallBars({ calls, overhead }: { calls: Call[]; overhead: number | null 
               </text>
             </g>
           )}
-          <text className="axis-label" x={IW / 2} y={IH + 30} textAnchor="middle">
-            model call
-          </text>
         </g>
       </svg>
       {h && hover !== null && (
-        <div className="chart-tip" style={{ left: `${((M.left + hover * slot + slot / 2) / W) * 100}%`, top: `${((M.top + y(h.totalTokens)) / H) * 100}%` }}>
+        <div className="chart-tip" style={{ left: M.left + hover * slot + slot / 2, top: M.top + y(h.totalTokens) }}>
           <b>
             #{h.index} {h.purpose}
           </b>{' '}
@@ -104,6 +105,7 @@ function CallBars({ calls, overhead }: { calls: Call[]; overhead: number | null 
           {h.tools.length ? h.tools.join(', ') : h.textChars ? `text ${h.textChars} chars` : 'no tool call'}
         </div>
       )}
+    </div>
       <div className="legend">
         {SEGMENTS.map((s) => (
           <span key={s.key}>
@@ -111,8 +113,14 @@ function CallBars({ calls, overhead }: { calls: Call[]; overhead: number | null 
             {s.label}
           </span>
         ))}
+        {overhead !== null && overhead > 0 && (
+          <span>
+            <span className="ds-legend__swatch ds-legend__swatch--dash" />
+            Fixed overhead (est.)
+          </span>
+        )}
       </div>
-    </div>
+    </>
   );
 }
 

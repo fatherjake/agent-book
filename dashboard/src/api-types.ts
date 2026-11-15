@@ -60,13 +60,12 @@ export interface ExperimentRow {
   passRate: number | null;
   medianTokens: number | null;
   costUsd: number;
+  /** Median wall clock per run: coding start → end of evaluation. */
   medianDurationMs: number | null;
   visualScore: number | null;
   /** (bestTokens - medianTokens) / bestTokens * 100 (storage/db.ts semantics); positive = fewer tokens than the best. */
   improvementVsBestPct: number | null;
   isMock: boolean;
-  /** Some evaluation skipped the LLM browser agent ([NO-BROWSER-AGENT]). */
-  noBrowserAgent: boolean;
   /** Flagged as cheating by a human (directly, or inherited from the parent config). */
   cheating: { reason: string; flaggedAt: string; inheritedFrom: string | null } | null;
 }
@@ -80,7 +79,10 @@ export interface RunRow {
   passed: boolean | null;
   startedAt: string | null;
   finishedAt: string | null;
+  /** Wall clock: coding start → end of evaluation. */
   durationMs: number | null;
+  /** Coding agent only. */
+  codingMs: number | null;
   totalTokens: number | null;
   costUsd: number | null;
   toolCalls: number | null;
@@ -89,8 +91,6 @@ export interface RunRow {
   imageId: string | null;
   starterHash: string | null;
   isMock: boolean;
-  /** This run's evaluation skipped the LLM browser agent ([NO-BROWSER-AGENT]). */
-  noBrowserAgent: boolean;
 }
 
 export interface ExperimentDetail {

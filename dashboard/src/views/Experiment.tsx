@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { enc, useApi } from '../api';
 import type { ExperimentDetail } from '../api-types';
-import { Card, CheatingBadge, LoadState, MockBadge, NoBrowserBadge, OutcomeBadge, PassBadge, Stat } from '../components';
+import { Ago, Card, CheatingBadge, LoadState, MockBadge, OutcomeBadge, PassBadge, Stat } from '../components';
 import { fmtDate, fmtDuration, fmtPct, fmtScore, fmtTokens, fmtUsd } from '../format';
 import { RunPanel } from './Run';
 
@@ -42,10 +42,10 @@ export function ExperimentView({ id }: { id: string }) {
         return (
           <>
             <div className="crumbs">
-              <a href="#/experiments">Experiments</a> / {e.id}
+              <a href="#/">Experiments</a> / {e.id}
             </div>
             <h1>
-              {e.id} <MockBadge show={e.isMock} /> <NoBrowserBadge show={e.noBrowserAgent} /> <CheatingBadge cheating={e.cheating} /> <OutcomeBadge outcome={e.outcome} />{' '}
+              {e.id} <MockBadge show={e.isMock} /> <CheatingBadge cheating={e.cheating} /> <OutcomeBadge outcome={e.outcome} />{' '}
               <span className="badge neutral">{e.status}</span>
             </h1>
             {e.isMock && (
@@ -54,15 +54,9 @@ export function ExperimentView({ id }: { id: string }) {
               </div>
             )}
             {e.cheating && (
-              <div className="mock-banner">
+              <div className="mock-banner neg">
                 <CheatingBadge cheating={e.cheating} /> Flagged as cheating{e.cheating.inheritedFrom ? ` (inherited from ${e.cheating.inheritedFrom})` : ''}:{' '}
                 {e.cheating.reason}. It is never promoted, does not count as the best config, and the research agent is told not to reuse it.
-              </div>
-            )}
-            {e.noBrowserAgent && (
-              <div className="mock-banner">
-                <NoBrowserBadge /> Evaluated without the LLM browser agent: the evaluation is incomplete, so this experiment can never
-                be promoted, whatever its pass rate.
               </div>
             )}
             <div className="stats">
@@ -71,7 +65,7 @@ export function ExperimentView({ id }: { id: string }) {
               <Stat label="Pass rate" value={e.passRate === null ? '—' : fmtPct(e.passRate * 100)} sub={`${e.passes}/${e.runs} runs passed`} />
               <Stat label="Median tokens" value={fmtTokens(e.medianTokens)} sub={e.improvementVsBestPct === null ? undefined : `${fmtPct(e.improvementVsBestPct, true)} fewer tokens than best`} />
               <Stat label="API-equiv. cost" value={fmtUsd(e.costUsd)} sub={`median runtime ${fmtDuration(e.medianDurationMs)}`} />
-              <Stat label="Visual score" value={fmtScore(e.visualScore)} sub={`created ${fmtDate(e.createdAt)}`} />
+              <Stat label="Visual score" value={fmtScore(e.visualScore)} sub={<>created <Ago iso={e.createdAt} /></>} />
             </div>
 
             <div className="grid-2">
@@ -124,7 +118,7 @@ export function ExperimentView({ id }: { id: string }) {
                       {d.runs.map((r) => (
                         <tr key={r.id} className={'clickable ' + (r.id === runId ? 'selected' : '')} onClick={() => setSelectedRun(r.id)}>
                           <td className="mono">
-                            {r.id} <MockBadge show={r.isMock} /> <NoBrowserBadge show={r.noBrowserAgent} />
+                            {r.id} <MockBadge show={r.isMock} />
                           </td>
                           <td>{r.status}</td>
                           <td>
