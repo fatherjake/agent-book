@@ -10,7 +10,7 @@
  *
  * Every tag is a content hash of its inputs (Dockerfile, scripts, build.json, patches, parent tag), so
  * an existing tag is reused and any input change produces a new one. Builds refuse to start when the
- * host has less than FRUGAL_MIN_FREE_GB (default 30) free (FRUGAL_SKIP_DISK_CHECK=1 overrides).
+ * host has less than FRUGAL_MIN_FREE_GB (default 12) free (FRUGAL_SKIP_DISK_CHECK=1 overrides).
  * FRUGAL_MASTODON_PLATFORM (e.g. linux/amd64) forces a platform; default is the native one.
  *
  * CLI (host):
@@ -225,7 +225,9 @@ export function hostFreeGb(dir?: string): number {
 
 export function assertDiskSpace(what: string): void {
   if (process.env.FRUGAL_SKIP_DISK_CHECK === '1') return;
-  const min = Number(process.env.FRUGAL_MIN_FREE_GB ?? 30);
+  // Measured: a full rebuild of base + one task + its Claude Code layer is ~8 GB of images, plus build
+  // cache; 12 GB leaves headroom. (30 GB was a pre-build guess and blocked a live research session.)
+  const min = Number(process.env.FRUGAL_MIN_FREE_GB ?? 12);
   const free = hostFreeGb();
   if (free < min)
     throw new Error(

@@ -3,10 +3,10 @@
 Docker images for the brownfield tasks `mastodon-bookmarks` and `mastodon-filters`
 (contract: `docs/TASKS.md` §3). Everything is built by `image.ts` in this directory.
 
-> **Status: not built yet.** The host had 17 to 20 GB free (we require 30 GB before any build), so
-> no image has been built or tested end to end. Everything below that isn't marked *verified* is
-> the design, plus estimates. The parts that could be checked without a build were checked; see
-> "Verified without building".
+> **Status: built and validated (2026-11-15)** on arm64 macOS (Docker VM 8 GB). Base ~2 GB, each task
+> image ~3.3 GB, each Claude Code layer ~0.5 GB. The upstream reference passes every evaluator check
+> and the bare checkpoint fails (see the VALIDATION.md files under evaluator/tasks). Sections below
+> that predate the build still carry the original estimates.
 
 ## Images
 
@@ -28,7 +28,7 @@ npx tsx benchmark/tasks/mastodon/image.ts ref  mastodon-bookmarks      # hidden 
 npx tsx benchmark/tasks/mastodon/image.ts ref-tree mastodon-bookmarks /tmp/ref-bm   # host checkout, no docker
 ```
 
-Builds refuse to start below `FRUGAL_MIN_FREE_GB` (default 30) free on the host
+Builds refuse to start below `FRUGAL_MIN_FREE_GB` (default 12) free on the host
 (`FRUGAL_SKIP_DISK_CHECK=1` overrides this). `FRUGAL_MASTODON_PLATFORM=linux/amd64` forces emulation;
 see "arm64" below. The runner reaches the images through `benchmark/tasks/<taskId>/docker/image.ts`,
 the `image.builder` in each task.json. Its `ensureTaskImage()` returns
@@ -113,7 +113,9 @@ file, stash, reflog, FETCH_HEAD/ORIG_HEAD, extra pack, unreachable object, or a 
 * **`/opt/frugal/task/app start [--port N] [--no-sidekiq] [--skip-migrate]`** (evaluator) runs
   `services start`, then `bin/rails db:migrate` (development), then compiles the development packs
   with `Webpacker.compile`. That's the same step the dev server runs on a first request: it records
-  the source digest, so no request ever compiles. (`rails webpacker:compile` would force
+  the source digest, so no request ever compiles. Measured: a cold `app start` takes about 18 s, 13 s
+  of it webpack. Baking precompiled packs into the image cut that to 6 s, which wasn't worth changing
+  the environment mid-research, so it was reverted. (`rails webpacker:compile` would force
   `NODE_ENV=production` on webpacker 3.) It then starts puma (single mode, `0.0.0.0:$PORT`) and
   sidekiq in the background, and returns once `GET /about` is 200. Rails serves the packs from
   `public/packs`. `app run` does the same but keeps puma in the foreground. `app stop|status|logs`

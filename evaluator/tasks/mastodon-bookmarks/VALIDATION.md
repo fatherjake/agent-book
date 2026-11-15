@@ -1,9 +1,8 @@
 # Validation: mastodon-bookmarks (HIDDEN)
 
-**Status: NOT VALIDATED END TO END.** No Mastodon image exists yet. The host has about 20 GB free,
-and image builds need 30 GB (benchmark/tasks/mastodon/README.md). Everything that can be checked
-without an image has been checked (see "What was verified"). The two required runs below are still
-open, and so is the runtime measurement.
+**Status: VALIDATED END TO END (2026-11-15).** Reference: 46/46 mandatory, 7/7 optional; bare: 17/46 mandatory (fails as it must).
+Fixes found while validating: seed users accept the terms (`agreement`, lazily defined in Rails 5.2),
+ffmpeg in the base image (a randomly fabricated .webm made a regression spec flaky).
 
 ## Required runs (docs/TASKS.md §4)
 

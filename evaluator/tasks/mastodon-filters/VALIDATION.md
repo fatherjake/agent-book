@@ -1,9 +1,10 @@
 # Validation: mastodon-filters (HIDDEN, holdout)
 
-**Status: NOT VALIDATED END TO END.** No Mastodon image exists yet. The host has about 20 GB free,
-and image builds need 30 GB (benchmark/tasks/mastodon/README.md). Everything that can be checked
-without an image has been checked (see "What was verified"). The two required runs below are still
-open, and so is the runtime measurement.
+**Status: VALIDATED END TO END (2026-11-15).** Reference: 43/43 mandatory, 6/6 optional; bare: 14/43 mandatory (fails as it must).
+Fixes found while validating: seed users accept the terms (`agreement`, lazily defined in Rails 5.2),
+ffmpeg in the base image (a randomly fabricated .webm made a regression spec flaky), the sidebar
+link check matches text content (Font Awesome's glyph is part of the accessible name), and the
+context validation check accepts Rails' "can't be blank" (the form shows only the first error).
 
 ## Required runs (docs/TASKS.md §4)
 

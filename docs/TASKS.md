@@ -94,7 +94,7 @@ Base image `frugal-task-<taskId>:<hash>`; Claude Code layer `frugal-task-<taskId
 * `/opt/frugal/task/app start` (evaluator only): runs migrations, precompiles assets (or another
   documented way to serve the web UI), and serves the app on a port with the web UI working.
 * **Disk:** the host is short on disk. Before any `docker build`, check free space and don't
-  build below 30 GB free. Reuse layers: both tasks share a base where possible.
+  build below 12 GB free (`FRUGAL_MIN_FREE_GB`; a full rebuild needs ~8 GB). Reuse layers: both tasks share a base where possible.
 * Snapshot for `git-diff` tasks: after the run the runner stores `results/runs/<id>/workspace.patch`
   (`git add -A && git diff --cached --binary` against the checkpoint, excluding log/ tmp/ node_modules
   vendor/ public/packs*). The evaluator applies it to a fresh container from the base image.
