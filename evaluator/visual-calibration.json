@@ -1,0 +1,501 @@
+{
+  "generatedAt": "2026-11-14T22:19:51.083Z",
+  "results": {
+    "reference": {
+      "score": 100,
+      "desktop": {
+        "score": 100,
+        "pixel": 1,
+        "ssim": 1,
+        "layout": 1,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0,
+          "mismatched": 0,
+          "mismatchedTolerant": 0,
+          "inkPixels": 21378,
+          "ssimScale1": 1
+        }
+      },
+      "mobile": {
+        "score": 100,
+        "pixel": 1,
+        "ssim": 1,
+        "layout": 1,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0,
+          "mismatched": 0,
+          "mismatchedTolerant": 0,
+          "inkPixels": 19770,
+          "ssimScale1": 1
+        }
+      }
+    },
+    "dark-theme": {
+      "score": 42.87,
+      "desktop": {
+        "score": 43.63,
+        "pixel": 0,
+        "ssim": 0.145,
+        "layout": 1,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.95,
+          "mismatched": 972981,
+          "mismatchedTolerant": 970816,
+          "inkPixels": 21378,
+          "ssimScale1": 0.186
+        }
+      },
+      "mobile": {
+        "score": 41.73,
+        "pixel": 0,
+        "ssim": 0.069,
+        "layout": 1,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.875,
+          "mismatched": 288078,
+          "mismatchedTolerant": 285938,
+          "inkPixels": 19770,
+          "ssimScale1": 0.167
+        }
+      }
+    },
+    "accent-green": {
+      "score": 93.99,
+      "desktop": {
+        "score": 94.18,
+        "pixel": 0.834,
+        "ssim": 0.999,
+        "layout": 1,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.004,
+          "mismatched": 3659,
+          "mismatchedTolerant": 3543,
+          "inkPixels": 21378,
+          "ssimScale1": 0.999
+        }
+      },
+      "mobile": {
+        "score": 93.7,
+        "pixel": 0.82,
+        "ssim": 0.999,
+        "layout": 1,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.011,
+          "mismatched": 3659,
+          "mismatchedTolerant": 3551,
+          "inkPixels": 19770,
+          "ssimScale1": 0.999
+        }
+      }
+    },
+    "shift-down-32px": {
+      "score": 47.13,
+      "desktop": {
+        "score": 48.76,
+        "pixel": 0.458,
+        "ssim": 0.376,
+        "layout": 0.333,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.017,
+          "mismatched": 17026,
+          "mismatchedTolerant": 11591,
+          "inkPixels": 21378,
+          "ssimScale1": 0.399
+        }
+      },
+      "mobile": {
+        "score": 44.68,
+        "pixel": 0.455,
+        "ssim": 0.217,
+        "layout": 0.333,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.048,
+          "mismatched": 15796,
+          "mismatchedTolerant": 10782,
+          "inkPixels": 19770,
+          "ssimScale1": 0.32
+        }
+      }
+    },
+    "narrow-480px": {
+      "score": 69.2,
+      "desktop": {
+        "score": 48.67,
+        "pixel": 0.562,
+        "ssim": 0.56,
+        "layout": 0,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.013,
+          "mismatched": 13810,
+          "mismatchedTolerant": 9370,
+          "inkPixels": 21378,
+          "ssimScale1": 0.562
+        }
+      },
+      "mobile": {
+        "score": 100,
+        "pixel": 1,
+        "ssim": 1,
+        "layout": 1,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0,
+          "mismatched": 0,
+          "mismatchedTolerant": 0,
+          "inkPixels": 19770,
+          "ssimScale1": 1
+        }
+      }
+    },
+    "font-arial": {
+      "score": 88.1,
+      "desktop": {
+        "score": 88.52,
+        "pixel": 0.932,
+        "ssim": 0.903,
+        "layout": 0.933,
+        "typography": 0.667,
+        "raw": {
+          "mismatchRatio": 0.006,
+          "mismatched": 5866,
+          "mismatchedTolerant": 1458,
+          "inkPixels": 21378,
+          "ssimScale1": 0.749
+        }
+      },
+      "mobile": {
+        "score": 87.47,
+        "pixel": 0.928,
+        "ssim": 0.866,
+        "layout": 0.933,
+        "typography": 0.667,
+        "raw": {
+          "mismatchRatio": 0.018,
+          "mismatched": 5835,
+          "mismatchedTolerant": 1417,
+          "inkPixels": 19770,
+          "ssimScale1": 0.709
+        }
+      }
+    },
+    "larger-text": {
+      "score": 85.35,
+      "desktop": {
+        "score": 94.54,
+        "pixel": 0.938,
+        "ssim": 0.926,
+        "layout": 1,
+        "typography": 0.905,
+        "raw": {
+          "mismatchRatio": 0.004,
+          "mismatched": 3617,
+          "mismatchedTolerant": 1329,
+          "inkPixels": 21378,
+          "ssimScale1": 0.858
+        }
+      },
+      "mobile": {
+        "score": 71.56,
+        "pixel": 0.777,
+        "ssim": 0.464,
+        "layout": 0.768,
+        "typography": 0.905,
+        "raw": {
+          "mismatchRatio": 0.024,
+          "mismatched": 7927,
+          "mismatchedTolerant": 4417,
+          "inkPixels": 19770,
+          "ssimScale1": 0.496
+        }
+      }
+    },
+    "no-card-border-radius-4": {
+      "score": 99.99,
+      "desktop": {
+        "score": 99.99,
+        "pixel": 1,
+        "ssim": 1,
+        "layout": 1,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0,
+          "mismatched": 0,
+          "mismatchedTolerant": 0,
+          "inkPixels": 21378,
+          "ssimScale1": 0.998
+        }
+      },
+      "mobile": {
+        "score": 99.99,
+        "pixel": 1,
+        "ssim": 1,
+        "layout": 1,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0,
+          "mismatched": 0,
+          "mismatchedTolerant": 0,
+          "inkPixels": 19770,
+          "ssimScale1": 0.997
+        }
+      }
+    },
+    "tighter-rows": {
+      "score": 72.16,
+      "desktop": {
+        "score": 70.74,
+        "pixel": 0.801,
+        "ssim": 0.57,
+        "layout": 0.539,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.008,
+          "mismatched": 7953,
+          "mismatchedTolerant": 4257,
+          "inkPixels": 21378,
+          "ssimScale1": 0.558
+        }
+      },
+      "mobile": {
+        "score": 74.29,
+        "pixel": 0.811,
+        "ssim": 0.522,
+        "layout": 0.714,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.023,
+          "mismatched": 7638,
+          "mismatchedTolerant": 3733,
+          "inkPixels": 19770,
+          "ssimScale1": 0.509
+        }
+      }
+    },
+    "shift-4px": {
+      "score": 83.91,
+      "desktop": {
+        "score": 84.22,
+        "pixel": 0.815,
+        "ssim": 0.711,
+        "layout": 0.917,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.009,
+          "mismatched": 9164,
+          "mismatchedTolerant": 3946,
+          "inkPixels": 21378,
+          "ssimScale1": 0.449
+        }
+      },
+      "mobile": {
+        "score": 83.44,
+        "pixel": 0.827,
+        "ssim": 0.664,
+        "layout": 0.917,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.025,
+          "mismatched": 8251,
+          "mismatchedTolerant": 3429,
+          "inkPixels": 19770,
+          "ssimScale1": 0.436
+        }
+      }
+    },
+    "shift-2px": {
+      "score": 91.06,
+      "desktop": {
+        "score": 91.16,
+        "pixel": 0.89,
+        "ssim": 0.843,
+        "layout": 0.958,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.008,
+          "mismatched": 7843,
+          "mismatchedTolerant": 2362,
+          "inkPixels": 21378,
+          "ssimScale1": 0.472
+        }
+      },
+      "mobile": {
+        "score": 90.92,
+        "pixel": 0.902,
+        "ssim": 0.816,
+        "layout": 0.958,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.021,
+          "mismatched": 7032,
+          "mismatchedTolerant": 1947,
+          "inkPixels": 19770,
+          "ssimScale1": 0.47
+        }
+      }
+    },
+    "shift-1px": {
+      "score": 97.64,
+      "desktop": {
+        "score": 97.74,
+        "pixel": 1,
+        "ssim": 0.931,
+        "layout": 0.979,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.005,
+          "mismatched": 5591,
+          "mismatchedTolerant": 0,
+          "inkPixels": 21378,
+          "ssimScale1": 0.549
+        }
+      },
+      "mobile": {
+        "score": 97.5,
+        "pixel": 1,
+        "ssim": 0.921,
+        "layout": 0.979,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.015,
+          "mismatched": 4794,
+          "mismatchedTolerant": 0,
+          "inkPixels": 19770,
+          "ssimScale1": 0.565
+        }
+      }
+    },
+    "add-button-wider-4px": {
+      "score": 99.28,
+      "desktop": {
+        "score": 99.34,
+        "pixel": 0.992,
+        "ssim": 0.994,
+        "layout": 0.991,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0,
+          "mismatched": 385,
+          "mismatchedTolerant": 181,
+          "inkPixels": 21378,
+          "ssimScale1": 0.984
+        }
+      },
+      "mobile": {
+        "score": 99.19,
+        "pixel": 0.991,
+        "ssim": 0.989,
+        "layout": 0.991,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.001,
+          "mismatched": 385,
+          "mismatchedTolerant": 181,
+          "inkPixels": 19770,
+          "ssimScale1": 0.981
+        }
+      }
+    },
+    "text-color-gray-700": {
+      "score": 97.27,
+      "desktop": {
+        "score": 97.27,
+        "pixel": 0.932,
+        "ssim": 0.985,
+        "layout": 1,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.002,
+          "mismatched": 2111,
+          "mismatchedTolerant": 1444,
+          "inkPixels": 21378,
+          "ssimScale1": 0.987
+        }
+      },
+      "mobile": {
+        "score": 97.26,
+        "pixel": 0.936,
+        "ssim": 0.979,
+        "layout": 1,
+        "typography": 1,
+        "raw": {
+          "mismatchRatio": 0.006,
+          "mismatched": 1904,
+          "mismatchedTolerant": 1256,
+          "inkPixels": 19770,
+          "ssimScale1": 0.984
+        }
+      }
+    },
+    "unstyled": {
+      "score": 40.63,
+      "desktop": {
+        "score": 43.23,
+        "pixel": 0.526,
+        "ssim": 0.821,
+        "layout": 0,
+        "typography": 0.286,
+        "raw": {
+          "mismatchRatio": 0.015,
+          "mismatched": 15220,
+          "mismatchedTolerant": 10130,
+          "inkPixels": 21378,
+          "ssimScale1": 0.886
+        }
+      },
+      "mobile": {
+        "score": 36.73,
+        "pixel": 0.513,
+        "ssim": 0.6,
+        "layout": 0.009,
+        "typography": 0.238,
+        "raw": {
+          "mismatchRatio": 0.044,
+          "mismatched": 14635,
+          "mismatchedTolerant": 9635,
+          "inkPixels": 19770,
+          "ssimScale1": 0.713
+        }
+      }
+    },
+    "starter": {
+      "score": 47.61,
+      "desktop": {
+        "score": 49.9,
+        "pixel": 0.799,
+        "ssim": 0.878,
+        "layout": 0,
+        "typography": 0,
+        "raw": {
+          "mismatchRatio": 0.009,
+          "mismatched": 9393,
+          "mismatchedTolerant": 4303,
+          "inkPixels": 21378,
+          "ssimScale1": 0.925
+        }
+      },
+      "mobile": {
+        "score": 44.17,
+        "pixel": 0.791,
+        "ssim": 0.659,
+        "layout": 0,
+        "typography": 0,
+        "raw": {
+          "mismatchRatio": 0.027,
+          "mismatched": 8798,
+          "mismatchedTolerant": 4127,
+          "inkPixels": 19770,
+          "ssimScale1": 0.774
+        }
+      }
+    }
+  }
+}
