@@ -103,9 +103,19 @@ export interface EnsureImageOptions {
  * Make sure the benchmark image for the current starter exists, building it if needed.
  * Idempotent: if `frugal-bench:<hash>` exists the build is skipped.
  */
-export async function ensureImage(
-  opts: EnsureImageOptions = {},
-): Promise<{ image: string; imageId: string; starterHash: string }> {
+const ensureInflight = new Map<string, Promise<{ image: string; imageId: string; starterHash: string }>>();
+
+export function ensureImage(opts: EnsureImageOptions = {}): Promise<{ image: string; imageId: string; starterHash: string }> {
+  // Concurrent runs share one check/build per starter hash (a failed attempt is not cached).
+  const key = `${computeStarterHash()}:${opts.force ? 'force' : ''}`;
+  const cur = ensureInflight.get(key);
+  if (cur) return cur;
+  const p = ensureImageUncached(opts).finally(() => ensureInflight.delete(key));
+  ensureInflight.set(key, p);
+  return p;
+}
+
+async function ensureImageUncached(opts: EnsureImageOptions): Promise<{ image: string; imageId: string; starterHash: string }> {
   const starterHash = computeStarterHash();
   const image = imageTag(starterHash);
 

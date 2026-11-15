@@ -19,7 +19,8 @@ export const BENCHMARK_CLI: CommandSpec = {
   summary: 'Run a coding-agent configuration against the todo-app benchmark and evaluate the result.',
   flags: [
     { name: 'config', type: 'string', description: "Config id under configs/ ('baseline' or 'experiments/NNN')", default: 'baseline' },
-    { name: 'runs', type: 'number', description: 'Number of sequential runs', default: 1, integer: true, min: 1 },
+    { name: 'runs', type: 'number', description: 'Number of runs', default: 1, integer: true, min: 1 },
+    { name: 'concurrency', type: 'number', description: 'Runs executed in parallel (each fully isolated)', default: 1, integer: true, min: 1 },
     { name: 'suite', type: 'string', description: 'Evaluation suite', default: 'dev', choices: ['dev', 'holdout'] },
     { name: 'provider', type: 'string', description: "Override the config's model provider (mock = no API calls, results flagged [MOCK])", choices: ['mock', 'anthropic'] },
     {
@@ -303,6 +304,7 @@ async function main(): Promise<void> {
     configId,
     experimentId: exp.id,
     runs: args.runs as number,
+    concurrency: args.concurrency as number,
     suite: args.suite as 'dev' | 'holdout',
     phase: args.suite === 'holdout' ? 'holdout' : 'manual',
     providerFactory,

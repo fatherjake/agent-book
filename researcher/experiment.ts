@@ -1,6 +1,8 @@
 /**
- * runBenchmark: execute N sequential coding runs of one config, evaluate each app snapshot,
- * and persist runs / evaluations / usage records / artifacts. One failing run never stops the batch.
+ * runBenchmark: execute N coding runs of one config (up to `concurrency` at a time), evaluate each
+ * app snapshot, and persist runs / evaluations / usage records / artifacts. One failing run never
+ * stops the batch. Every run has its own containers, network, gateway and ports, so runs are
+ * independent; results are returned in index order regardless of completion order.
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -67,6 +69,16 @@ export interface RunBenchmarkOptions {
    * Without this hook, usage-limited runs are returned like any other failed run.
    */
   onUsageLimit?: (hit: UsageLimitHit) => Promise<boolean>;
+  /**
+   * Runs executed at the same time (default 1 = sequential). Budget/pause checks (`beforeRun`) happen
+   * before each run starts, so a budget can be overshot by up to concurrency-1 in-flight runs.
+   * Concurrent usage-limit hits share ONE `onUsageLimit` wait; no new run starts while it is pending.
+   */
+  concurrency?: number;
+  /** Delay between starting the first runs of a concurrent batch (ms, default 3000): avoids a Docker start-up stampede. */
+  staggerMs?: number;
+  /** Sleep used for the stagger (injectable for fake clocks; default real timers, abortable). */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   deps?: Partial<ExperimentDeps>;
 }
 
@@ -241,7 +253,7 @@ function registerArtifacts(db: Db, r: BenchmarkRunResult, experimentId: string |
   }
 }
 
-/** Run `runs` sequential benchmark runs of one config. Never throws for per-run failures. */
+/** Run `runs` benchmark runs of one config, `concurrency` at a time. Never throws for per-run failures. */
 export async function runBenchmark(opts: RunBenchmarkOptions): Promise<BenchmarkRunResult[]> {
   const injected = opts.deps;
   const deps: ExperimentDeps =
@@ -257,20 +269,12 @@ export async function runBenchmark(opts: RunBenchmarkOptions): Promise<Benchmark
   const limitsOverride: Partial<RunLimits> | undefined =
     opts.maxTokensPerRun && opts.maxTokensPerRun > 0 ? { maxTotalTokens: opts.maxTokensPerRun } : undefined;
 
-  const results: BenchmarkRunResult[] = [];
-  for (let i = 0; i < opts.runs; i++) {
-    if (opts.signal?.aborted) {
-      log.warn('benchmark batch aborted before run', { index: i, configId: opts.configId });
-      break;
-    }
-    if (opts.beforeRun) {
-      const go = await opts.beforeRun(i);
-      if (go === false) {
-        log.info('benchmark batch stopped by beforeRun hook', { index: i });
-        break;
-      }
-      if (opts.signal?.aborted) break;
-    }
+  const total = opts.runs;
+  const concurrency = Math.max(1, Math.min(Math.floor(opts.concurrency ?? 1), total || 1));
+  const staggerMs = opts.staggerMs ?? 3000;
+
+  /** One coding run + evaluation + persistence for index i. Never throws. */
+  const runOne = async (i: number): Promise<{ result: BenchmarkRunResult; limitHit: ReturnType<typeof usageLimitOf>; runId: string }> => {
     const seed = opts.seeds?.[i] ?? deterministicSeed(`${opts.experimentId ?? opts.configId}:${phase}:${suite}:${i}`);
     const runId = newRunId();
     const runProvider = opts.providerFactory ? opts.providerFactory() : opts.provider;
@@ -391,24 +395,108 @@ export async function runBenchmark(opts: RunBenchmarkOptions): Promise<Benchmark
     }
     log.info('run done', {
       runId,
+      index: i + 1,
+      of: total,
       status: result.coding.status,
       passed: result.passed,
       totalTokens: result.coding.usage.totalTokens,
       mock: result.coding.usedMockProvider,
     });
-    if (limitHit && opts.onUsageLimit) {
-      log.warn('run hit the subscription usage limit', { runId, source: limitHit.source, resetAt: limitHit.resetAt });
-      const retry = await opts.onUsageLimit({ ...limitHit, runId, index: i, experimentId: opts.experimentId });
-      if (retry && !opts.signal?.aborted) {
-        i--; // retry the same index (fresh run id)
-        continue;
-      }
-      break;
+    return { result, limitHit, runId };
+  };
+
+  const slots: (BenchmarkRunResult | undefined)[] = new Array(total);
+  let next = 0;
+  let stopped = false;
+  /** A pending usage-limit wait shared by every worker (resolves to "retry?"). */
+  let limitWait: Promise<boolean> | null = null;
+  /** Bumped each time a usage-limit wait finishes with "retry". */
+  let waitGeneration = 0;
+
+  /** Pause/budget gate before a run starts; false = stop the whole batch. */
+  const gate = async (i: number): Promise<boolean> => {
+    while (limitWait) {
+      if (!(await limitWait)) return false;
     }
-    results.push(result);
-    opts.onRunComplete?.(result, i);
-  }
-  return results;
+    if (stopped || opts.signal?.aborted) return false;
+    if (opts.beforeRun) {
+      const go = await opts.beforeRun(i);
+      if (go === false) {
+        log.info('benchmark batch stopped by beforeRun hook', { index: i });
+        return false;
+      }
+    }
+    return !(stopped || opts.signal?.aborted);
+  };
+
+  const worker = async (w: number) => {
+    if (w > 0 && staggerMs > 0) await (opts.sleep ?? sleepAbortable)(w * staggerMs, opts.signal);
+    while (!stopped) {
+      if (opts.signal?.aborted) {
+        log.warn('benchmark batch aborted before run', { index: next, configId: opts.configId });
+        stopped = true;
+        break;
+      }
+      if (next >= total) break;
+      const i = next++;
+      for (;;) {
+        if (!(await gate(i))) {
+          stopped = true;
+          return;
+        }
+        const startedGen = waitGeneration;
+        const { result, limitHit, runId } = await runOne(i);
+        if (limitHit && opts.onUsageLimit) {
+          log.warn('run hit the subscription usage limit', { runId, source: limitHit.source, resetAt: limitHit.resetAt });
+          if (!limitWait && startedGen !== waitGeneration) {
+            // Stale hit: this run started before a wait that has since completed; retry without waiting again.
+            if (opts.signal?.aborted) {
+              stopped = true;
+              return;
+            }
+            continue;
+          }
+          if (!limitWait) {
+            const p: Promise<boolean> = opts
+              .onUsageLimit({ ...limitHit, runId, index: i, experimentId: opts.experimentId })
+              .catch(() => false)
+              .then((retry) => {
+                if (retry) waitGeneration++;
+                return retry;
+              })
+              .finally(() => {
+                if (limitWait === p) limitWait = null;
+              });
+            limitWait = p;
+          }
+          const retry = await limitWait;
+          if (retry && !opts.signal?.aborted) continue; // retry the same index (fresh run id)
+          stopped = true;
+          return;
+        }
+        slots[i] = result;
+        opts.onRunComplete?.(result, i);
+        break;
+      }
+    }
+  };
+
+  if (concurrency > 1) log.info('benchmark batch', { configId: opts.configId, runs: total, concurrency });
+  await Promise.all(Array.from({ length: concurrency }, (_, w) => worker(w)));
+  return slots.filter((r): r is BenchmarkRunResult => r !== undefined);
+}
+
+function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const t = setTimeout(done, ms);
+    function done() {
+      clearTimeout(t);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    }
+    signal?.addEventListener('abort', done, { once: true });
+  });
 }
 
 /**

@@ -32,6 +32,7 @@ function fakeAgent(throwFirst: Error[] = []): ResearchAgent & { calls: number } 
 
 const settings = (o: Partial<ResearchSettings> = {}): ResearchSettings => ({
   ...DEFAULT_RESEARCH_SETTINGS,
+  runConcurrency: 1, // these cases pin down sequential retry timing; concurrency is covered in experiment-concurrency.test.ts
   verificationRuns: 2,
   maxExperiments: 0,
   quickRunMaxTokenRatio: null,
