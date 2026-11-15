@@ -1,0 +1,20 @@
+{
+  "$comment": "Inputs of the mastodon-bookmarks task image (benchmark/tasks/mastodon/image.ts). Checkpoint = first parent of the upstream squash commit of PR #7107 'Add bookmarks' (merged 2019-11-13). Versions follow the checkpoint: .ruby-version 2.6.5, Gemfile.lock BUNDLED WITH 1.17.3, package.json engines node >=8.12 <13 (upstream Dockerfile used 12.11.1; 12.22.12 is the last 12.x).",
+  "taskId": "mastodon-bookmarks",
+  "upstream": {
+    "repo": "https://github.com/mastodon/mastodon.git",
+    "pr": 7107,
+    "featureCommit": "dfea7368c934f600bd0b6b93b4a6c008a4e265b0",
+    "checkpointCommit": "afb398b583b23c139c5a069c1281550bb69760e0"
+  },
+  "ruby": { "version": "2.6.5", "sha256": "66976b716ecc1fd34f9b7c3c2b07bbd37631815377a2e3e85a5b194cfdcbed7d" },
+  "bundler": "1.17.3",
+  "node": {
+    "version": "12.22.12",
+    "sha256": {
+      "arm64": "eebdeb528df727271635196188ed7d04a5dba2c61ccaded22f693ae501cf17f5",
+      "amd64": "e6d052364bfa2c17da92cf31794100cfd709ba147415ddaeed2222eec9ca1469"
+    }
+  },
+  "yarn": { "version": "1.22.19", "sha256": "732620bac8b1690d507274f025f3c6cfdc3627a84d9642e38a07452cc00e0f2e" }
+}

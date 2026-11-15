@@ -1,0 +1,20 @@
+{
+  "$comment": "Inputs of the mastodon-filters task image (benchmark/tasks/mastodon/image.ts). Checkpoint = first parent of the upstream squash-merge commit of PR #7905 'Keyword/phrase filtering' (merged 2018-06-29). Versions follow the checkpoint: .ruby-version 2.5.1, Gemfile.lock BUNDLED WITH 1.16.2; Node 8 because node-sass 4.7.2 (in yarn.lock) supports Node <= 9 (.nvmrc says 6, engines >=6).",
+  "taskId": "mastodon-filters",
+  "upstream": {
+    "repo": "https://github.com/mastodon/mastodon.git",
+    "pr": 7905,
+    "featureCommit": "cdb101340a20183a82889f811d9311c370c855e5",
+    "checkpointCommit": "fbee9b5ac898e571e384792a92b40fa1524cf127"
+  },
+  "ruby": { "version": "2.5.1", "sha256": "dac81822325b79c3ba9532b048c2123357d3310b2b40024202f360251d9829b1" },
+  "bundler": "1.16.2",
+  "node": {
+    "version": "8.17.0",
+    "sha256": {
+      "arm64": "8318d1ee0265d84025ecbea76aaecd732974a6f4ac8492ddd84231cee77ba948",
+      "amd64": "b7f6dd77fb173c8c7c30d61d0702eefc236bba74398538aa77bfa2bb47bddce6"
+    }
+  },
+  "yarn": { "version": "1.22.19", "sha256": "732620bac8b1690d507274f025f3c6cfdc3627a84d9642e38a07452cc00e0f2e" }
+}

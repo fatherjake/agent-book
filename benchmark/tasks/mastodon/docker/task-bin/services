@@ -1,0 +1,93 @@
+#!/bin/bash
+# /opt/frugal/task/services start|stop|status|restart
+#
+# Postgres and Redis for the Mastodon checkpoint, running as the calling user (uid 1000) with all
+# state under $FRUGAL_DATA_DIR (default /data, an anonymous volume in the sandbox). If the data dir
+# holds no database yet, the baked template (/opt/frugal/data-template: dev + test DBs with the
+# checkpoint schema) is copied in first. Both servers listen on 127.0.0.1 only (Postgres :5432,
+# Redis :6379) and need nothing writable outside the data dir. Every subcommand is idempotent.
+#
+# Exit codes: 0 ok / all running; 1 error; 3 (status only) something is not running.
+set -euo pipefail
+
+DATA=${FRUGAL_DATA_DIR:-/data}
+TEMPLATE=/opt/frugal/data-template
+PGBIN=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)
+PGDATA=$DATA/pg
+PG_PORT=5432
+REDIS_PORT=6379
+LOG=$DATA/log
+
+die() { echo "services: $*" >&2; exit 1; }
+
+pg_running() { "$PGBIN"/pg_ctl -D "$PGDATA" status >/dev/null 2>&1 && "$PGBIN"/pg_isready -q -h 127.0.0.1 -p $PG_PORT; }
+redis_running() { [ "$(redis-cli -h 127.0.0.1 -p $REDIS_PORT ping 2>/dev/null)" = PONG ]; }
+
+ensure_data() {
+  [ -d "$DATA" ] || die "$DATA does not exist (the sandbox must mount a writable volume there)"
+  if [ ! -f "$PGDATA/PG_VERSION" ]; then
+    [ -w "$DATA" ] || die "$DATA is not writable by uid $(id -u)"
+    [ -f "$TEMPLATE/pg/PG_VERSION" ] || die "no data template at $TEMPLATE"
+    cp -a "$TEMPLATE"/. "$DATA"/
+  fi
+  mkdir -p "$LOG" "$DATA/redis"
+  chmod 700 "$PGDATA"
+}
+
+start_pg() {
+  if pg_running; then return 0; fi
+  # A container restart leaves a stale postmaster.pid behind; postgres itself refuses to start
+  # only if that pid is alive and is a postgres, so removing it when nothing listens is safe.
+  if [ -f "$PGDATA/postmaster.pid" ] && ! "$PGBIN"/pg_ctl -D "$PGDATA" status >/dev/null 2>&1; then
+    rm -f "$PGDATA/postmaster.pid"
+  fi
+  # setsid: detach from the caller's process group/session so the server survives the exec
+  # (or an agent tool's timeout) that started it.
+  setsid -w "$PGBIN"/pg_ctl -D "$PGDATA" -l "$LOG/postgres.log" -w -t 120 start >/dev/null \
+    || { tail -n 30 "$LOG/postgres.log" >&2 || true; die "postgres failed to start"; }
+}
+
+start_redis() {
+  if redis_running; then return 0; fi
+  setsid -f redis-server --bind 127.0.0.1 --port $REDIS_PORT --dir "$DATA/redis" \
+    --daemonize no --save '' --appendonly no --protected-mode no \
+    --pidfile "$DATA/redis/redis.pid" --logfile "$LOG/redis.log" </dev/null >/dev/null 2>&1
+  for _ in $(seq 1 100); do redis_running && return 0; sleep 0.1; done
+  tail -n 30 "$LOG/redis.log" >&2 || true
+  die "redis failed to start"
+}
+
+status() {
+  local rc=0
+  if pg_running; then echo "postgres: running (127.0.0.1:$PG_PORT, data $PGDATA)"; else echo "postgres: stopped"; rc=3; fi
+  if redis_running; then echo "redis: running (127.0.0.1:$REDIS_PORT)"; else echo "redis: stopped"; rc=3; fi
+  return $rc
+}
+
+case "${1:-}" in
+  start)
+    ensure_data
+    start_pg
+    start_redis
+    status
+    ;;
+  stop)
+    if redis_running; then redis-cli -h 127.0.0.1 -p $REDIS_PORT shutdown nosave >/dev/null 2>&1 || true; fi
+    if [ -f "$PGDATA/PG_VERSION" ] && "$PGBIN"/pg_ctl -D "$PGDATA" status >/dev/null 2>&1; then
+      "$PGBIN"/pg_ctl -D "$PGDATA" -m fast -w -t 60 stop >/dev/null
+    fi
+    for _ in $(seq 1 50); do redis_running || break; sleep 0.1; done
+    echo "services: stopped"
+    ;;
+  restart)
+    "$0" stop
+    exec "$0" start
+    ;;
+  status)
+    status
+    ;;
+  *)
+    echo "usage: $0 start|stop|status|restart" >&2
+    exit 1
+    ;;
+esac
