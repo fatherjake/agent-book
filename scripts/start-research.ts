@@ -24,6 +24,12 @@ export const RESEARCH_CLI: CommandSpec = {
     'Start the autonomous research loop: propose → quick run → verify → promote, within budgets.\n' +
     'Settings: configs/research.json (flags override). Pause by creating results/research.pause; Ctrl-C shuts down gracefully.',
   flags: [
+    { name: 'dev-task', type: 'string', description: "Task the research optimizes (quick/verification/baseline runs; best and promotion are per dev task). Default from settings: 'todo'" },
+    {
+      name: 'holdout-task',
+      type: 'string',
+      description: 'Task of the holdout check on promotion (default: the dev task, i.e. its holdout suite). Another task is never shown to the research agent: one pass/fail bit',
+    },
     { name: 'max-experiments', type: 'number', description: 'Max candidate experiments in this session', integer: true, min: 0 },
     { name: 'max-total-tokens', type: 'number', description: 'Max tokens for the session, all roles combined (coding + evaluator + research)', integer: true, min: 1 },
     { name: 'max-coding-tokens', type: 'number', description: 'Max coding-agent tokens for the session (all runs combined)', integer: true, min: 1 },
@@ -83,6 +89,7 @@ export const RESEARCH_CLI: CommandSpec = {
     'npm run research -- --max-experiments 20',
     'npm run research -- --max-total-tokens 50000000 --max-duration 8h',
     'npm run research -- --resume',
+    'npm run research -- --dev-task mastodon-bookmarks --holdout-task mastodon-filters',
     'npm run research -- --dry-run',
     'npm run research -- --propose-only --prove-isolation',
     'npm run research -- --provider mock --mock-script reference-app --research-provider mock --max-experiments 2   # infra test',
@@ -148,10 +155,10 @@ async function proposeOnly(args: Record<string, unknown>, settings: ResearchSett
   const { readConfigFiles, applyProposal, configDir } = await import('../researcher/optimizer.js');
   const { ResearchProposalError } = await import('../researcher/research-agent.js');
   const configsRoot = resolve('configs');
-  const best = db.getBestVerified();
+  const best = db.getBestVerified(settings.devTask);
   const parent = best?.configId ?? 'baseline';
   const files = readConfigFiles(parent, configsRoot);
-  const experimentIndex = db.listExperiments().filter((e) => e.kind === 'candidate').length + 1;
+  const experimentIndex = db.listExperiments({ taskId: settings.devTask }).filter((e) => e.kind === 'candidate').length + 1;
   const usageFile = join(resultsDir(), 'research', 'usage.jsonl');
   const probes: { name: string; out: string }[] = [];
   let workspaceDir: string | undefined;
@@ -184,10 +191,17 @@ async function proposeOnly(args: Record<string, unknown>, settings: ResearchSett
   let code = 0;
   try {
     const res = await agent.propose({
-      context: { db, resultsDir: resultsDir(), configsRoot, verificationRuns: settings.verificationRuns },
+      context: {
+        db,
+        resultsDir: resultsDir(),
+        configsRoot,
+        verificationRuns: settings.verificationRuns,
+        taskId: settings.devTask,
+        ...(settings.holdoutTask !== settings.devTask ? { hiddenTaskIds: [settings.holdoutTask] } : {}),
+      },
       bestConfigId: parent,
       bestConfigFiles: files,
-      history: buildHistoryDigest(db, { maxExperiments: settings.historyMaxExperiments }),
+      history: buildHistoryDigest(db, { maxExperiments: settings.historyMaxExperiments, taskId: settings.devTask }),
       experimentIndex,
       singleVariableExperiments: settings.singleVariableExperiments,
       whitelist: { allowModelChange: settings.allowModelChange, allowedModels: settings.allowedModels },
@@ -269,6 +283,8 @@ async function main(): Promise<void> {
       researchModel: args['research-model'] as string | undefined,
       researchMode: args['research-mode'] as ResearchSettings['researchMode'] | undefined,
       skipBrowserAgent: args['skip-browser-agent'] ? true : undefined,
+      devTask: args['dev-task'] as string | undefined,
+      holdoutTask: args['holdout-task'] as string | undefined,
     };
   } catch (e) {
     console.error(`error: ${(e as Error).message}`);
@@ -281,7 +297,12 @@ async function main(): Promise<void> {
     const prev = db.latestSession();
     if (prev) {
       const explicit = Object.fromEntries(Object.entries(overrides).filter(([, v]) => v !== undefined));
-      overrides = { ...prev.budgets, ...explicit } as Partial<ResearchSettings>;
+      // The resumed session keeps its tasks unless flags say otherwise.
+      const prevTasks: Partial<ResearchSettings> = {};
+      const ps = (prev.settings ?? {}) as Partial<ResearchSettings>;
+      if (typeof ps.devTask === 'string') prevTasks.devTask = ps.devTask;
+      if (typeof ps.holdoutTask === 'string') prevTasks.holdoutTask = ps.holdoutTask;
+      overrides = { ...prev.budgets, ...prevTasks, ...explicit } as Partial<ResearchSettings>;
     }
   }
   let settings = loadResearchSettings(args.settings as string, overrides);
@@ -318,7 +339,10 @@ async function main(): Promise<void> {
     console.log(`  per experiment      ${fmtDuration(b.maxRuntimePerExperimentSec * 1000)}`);
     console.log(`  tokens per run cap  ${b.maxTokensPerCodingRun ? fmtTokens(b.maxTokensPerCodingRun) : 'config limit'}`);
     console.log(`  verification runs   ${b.verificationRuns} (quick runs: ${settings.quickRuns}, noise margin ${settings.noiseMarginPct}%, ${settings.runConcurrency} in parallel)`);
-    console.log(`  holdout             ${settings.holdout.onPromotion ? `${settings.holdout.runs} run(s) on each promotion` : 'off'}`);
+    console.log(`  dev task            ${settings.devTask}`);
+    console.log(
+      `  holdout             ${settings.holdout.onPromotion ? `${settings.holdout.runs} run(s) on each promotion, ${settings.holdoutTask === settings.devTask ? `${settings.devTask} holdout suite` : `task ${settings.holdoutTask} (hidden from the research agent)`}` : 'off'}`,
+    );
     console.log(`  single-variable     first ${settings.singleVariableExperiments} experiments`);
     console.log(`  pause file          ${join(resultsDir(), 'research.pause')}`);
     if (args.resume) {
@@ -341,7 +365,7 @@ async function main(): Promise<void> {
     describe();
     console.log('\nEnvironment (no paid models are invoked):');
     const { environmentChecks } = await import('./run-benchmark.js');
-    const best = db.getBestVerified();
+    const best = db.getBestVerified(settings.devTask);
     const items = await environmentChecks({ configId: best?.configId ?? 'baseline', provider: codingProviderName ?? undefined, dbPath: args.db as string | undefined });
     if (settings.researchProvider === 'anthropic' && !process.env.ANTHROPIC_API_KEY)
       items.push({ name: 'Research agent key', ok: false, detail: 'ANTHROPIC_API_KEY missing (research agent uses anthropic)' });

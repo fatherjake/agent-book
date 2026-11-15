@@ -1,5 +1,5 @@
 /**
- * npm run results -- [--experiment <id>] [--runs] [--json] [--limit N]
+ * npm run results -- [--experiment <id>] [--runs] [--json] [--limit N] [--task <id>]
  * npm run results -- --flag-cheating <run|experiment|config> --reason "..."   (or --clear-flag, --flags)
  * Terminal view of experiments and runs from results/benchmark.db. [MOCK] marks mock-provider results.
  */
@@ -17,6 +17,7 @@ export const RESULTS_CLI: CommandSpec = {
     { name: 'runs', type: 'boolean', description: 'List individual runs instead of experiments' },
     { name: 'limit', type: 'number', description: 'Show only the last N rows', integer: true, min: 1 },
     { name: 'json', type: 'boolean', description: 'Print JSON instead of tables' },
+    { name: 'task', type: 'string', description: 'Only this benchmark task (e.g. todo, mastodon-bookmarks); best/baseline are per task (default view: todo best, all experiments)' },
     { name: 'db', type: 'string', description: 'SQLite path (default results/benchmark.db or $FRUGAL_DB_PATH)' },
     {
       name: 'flag-cheating',
@@ -33,14 +34,17 @@ export const RESULTS_CLI: CommandSpec = {
     'npm run results -- --experiment exp-0003',
     'npm run results -- --runs --limit 20',
     'npm run results -- --json',
+    'npm run results -- --task mastodon-bookmarks',
     'npm run results -- --flag-cheating exp-0012 --reason "skill embeds a prebuilt server.js"',
     'npm run results -- --clear-flag exp-0012 --reason "false alarm: the helper only runs curl"',
   ],
 };
 
-function overview(db: Db): string {
-  const o = db.getOverview();
+function overview(db: Db, taskId?: string): string {
+  const o = db.getOverview(taskId);
+  const tasks = db.listTaskIds();
   const lines = [
+    ...(taskId || tasks.length > 1 ? [`Task                 : ${taskId ?? 'todo'}${taskId ? '' : ` (best/baseline; other tasks: ${tasks.filter((t) => t !== 'todo').join(', ')}; use --task)`}`] : []),
     `Best verified config : ${o.best ? `${o.best.configId} (${o.best.experimentId}) — median ${fmtTokens(o.best.medianTokens)} coding tokens, pass ${fmtPct(o.best.passRate * 100, 0)}` : 'none yet'}`,
     `Baseline             : ${o.baseline ? `median ${fmtTokens(o.baseline.medianTokens)}${o.baseline.meetsQuality ? '' : ' (did not meet quality requirements)'}${flagTags(o.baseline.isMock, false)}` : 'not run yet'}`,
     `Improvement          : ${fmtPct(o.improvementPct)}`,
@@ -56,13 +60,16 @@ function overview(db: Db): string {
   return lines.join('\n');
 }
 
-function experimentsTable(db: Db, limit?: number): string {
-  let list = db.listExperimentsWithAggregates();
+function experimentsTable(db: Db, limit?: number, taskId?: string): string {
+  let list = db.listExperimentsWithAggregates(taskId ? { taskId } : {});
   if (limit) list = list.slice(-limit);
   if (!list.length) return 'No experiments yet. Run `npm run research` or `npm run benchmark`.';
+  // The task column appears once more than one task has data.
+  const showTask = db.listTaskIds().length > 1;
   return textTable(
-    ['id', 'config', 'parent', 'model', 'status', 'outcome', 'pass', 'median tok', 'vs best', 'API-eq. cost', 'visual', 'time', 'hypothesis'],
+    [...(showTask ? ['task'] : []), 'id', 'config', 'parent', 'model', 'status', 'outcome', 'pass', 'median tok', 'vs best', 'API-eq. cost', 'visual', 'time', 'hypothesis'],
     list.map((e) => [
+      ...(showTask ? [e.taskId] : []),
       e.id + flagTags(e.anyMock, e.anyBrowserAgentSkipped) + (e.cheating ? ' [CHEATING]' : ''),
       e.candidateConfigId ?? '—',
       e.parentConfigId ?? '—',
@@ -80,8 +87,8 @@ function experimentsTable(db: Db, limit?: number): string {
   );
 }
 
-function runsTable(db: Db, filter: { experimentId?: string; limit?: number }): string {
-  let runs = db.listRuns({ experimentId: filter.experimentId });
+function runsTable(db: Db, filter: { experimentId?: string; limit?: number; taskId?: string }): string {
+  let runs = db.listRuns({ experimentId: filter.experimentId, ...(filter.taskId ? { taskId: filter.taskId } : {}) });
   if (filter.limit) runs = runs.slice(-filter.limit);
   if (!runs.length) return 'No runs.';
   return textTable(
@@ -114,6 +121,7 @@ function experimentDetail(db: Db, id: string): string {
   const e = d.experiment;
   const lines = [
     `Experiment ${e.id}${flagTags(e.anyMock, e.anyBrowserAgentSkipped)}${e.cheating ? ' [CHEATING]' : ''}  [${e.kind}]`,
+    `  task           : ${e.taskId}`,
     `  status/outcome : ${e.status} / ${e.outcome ?? '—'}`,
     ...(e.cheating
       ? [`  CHEATING       : flagged by ${e.cheating.source} ${e.cheating.flaggedAt}${e.cheating.inherited ? ` (inherited from ${e.cheating.flaggedConfigId})` : ''}: ${e.cheating.reason}`]
@@ -144,6 +152,7 @@ async function main(): Promise<void> {
   const { openDb } = await import('../storage/db.js');
   const db = openDb(args.db as string | undefined);
   const limit = args.limit as number | undefined;
+  const taskId = args.task as string | undefined;
   const flagTarget = (args['flag-cheating'] ?? args['clear-flag']) as string | undefined;
   if (flagTarget) {
     const fail = (msg: string): never => {
@@ -154,27 +163,33 @@ async function main(): Promise<void> {
     if (args['flag-cheating'] && args['clear-flag']) fail('use either --flag-cheating or --clear-flag, not both');
     const reason = (args.reason as string | undefined)?.trim();
     if (!reason) fail('--reason "..." is required (it is recorded and shown to the research agent)');
-    const before = db.getBestVerified();
+    const taskIds = db.listTaskIds();
+    const before = new Map(taskIds.map((t) => [t, db.getBestVerified(t)]));
     let f: import('../storage/db.js').FlagRow;
     try {
       f = db.insertFlag({ target: flagTarget, kind: args['flag-cheating'] ? 'cheating' : 'cleared', reason: reason!, source: 'human' });
     } catch (e) {
       return fail((e as Error).message);
     }
-    const after = db.getBestVerified();
     const derived = db
       .listExperimentsWithAggregates()
       .filter((e) => e.cheating?.inherited && e.cheating.flaggedConfigId === f.configId)
       .map((e) => e.id);
     console.log(`${f.kind === 'cheating' ? 'Flagged as CHEATING' : 'Cleared flag on'}: ${f.configId}${f.experimentId ? ` (${f.experimentId})` : ''} — ${f.reason}`);
     if (derived.length) console.log(`  also excluded (derived from it): ${derived.join(', ')}`);
-    if (before?.configId !== after?.configId)
-      console.log(`  best verified config: ${before?.configId ?? 'none'} → ${after ? `${after.configId} (${after.experimentId}, median ${fmtTokens(after.medianTokens)})` : 'none'}`);
-    const { syncPublishedBest } = await import('../researcher/loop.js');
+    const { syncPublishedBest, bestConfigDirFor } = await import('../researcher/loop.js');
     const { resultsDir, CONFIGS_DIR } = await import('../runner/env.js');
-    const { join } = await import('node:path');
-    const republished = syncPublishedBest(db, { bestConfigDir: join(resultsDir(), 'best-config'), configsRoot: CONFIGS_DIR });
-    if (republished) console.log(`  results/best-config/ now holds ${republished}`);
+    const { join, relative } = await import('node:path');
+    // Bests are per task: report and republish each task whose best changed.
+    for (const t of taskIds) {
+      const b0 = before.get(t) ?? null;
+      const after = db.getBestVerified(t);
+      const label = taskIds.length > 1 ? ` (task ${t})` : '';
+      if (b0?.configId !== after?.configId)
+        console.log(`  best verified config${label}: ${b0?.configId ?? 'none'} → ${after ? `${after.configId} (${after.experimentId}, median ${fmtTokens(after.medianTokens)})` : 'none'}`);
+      const republished = syncPublishedBest(db, { bestConfigDir: join(resultsDir(), 'best-config'), configsRoot: CONFIGS_DIR }, t);
+      if (republished) console.log(`  ${relative(process.cwd(), bestConfigDirFor(join(resultsDir(), 'best-config'), t)) || 'best-config'}/ now holds ${republished}`);
+    }
     console.log('  A running research session picks this up before its next run.');
     db.close();
     return;
@@ -193,15 +208,19 @@ async function main(): Promise<void> {
     const out = args.experiment
       ? db.getExperimentDetail(args.experiment as string)
       : args.runs
-        ? db.listRuns({ limit })
-        : { overview: db.getOverview(), experiments: db.listExperimentsWithAggregates(), bestHistory: db.getBestHistory() };
+        ? db.listRuns({ limit, ...(taskId ? { taskId } : {}) })
+        : {
+            overview: db.getOverview(taskId),
+            experiments: db.listExperimentsWithAggregates(taskId ? { taskId } : {}),
+            bestHistory: db.getBestHistory(taskId),
+          };
     console.log(JSON.stringify(out, null, 2));
   } else if (args.experiment) {
     console.log(experimentDetail(db, args.experiment as string));
   } else if (args.runs) {
-    console.log(runsTable(db, { limit }));
+    console.log(runsTable(db, { limit, taskId }));
   } else {
-    console.log(overview(db) + '\n\n' + experimentsTable(db, limit));
+    console.log(overview(db, taskId) + '\n\n' + experimentsTable(db, limit, taskId));
   }
   db.close();
 }

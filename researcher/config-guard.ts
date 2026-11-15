@@ -15,10 +15,15 @@
  *     token sheets, scripts or snippets that write files into the app, encoded/compressed blobs and
  *     long string literals. Prose that describes requirements and general engineering advice passes.
  *  3. Similarity: winnowed token k-gram fingerprints (k = 12) of every config file are compared with
- *     every app snapshot under results/runs/<id>/app and evaluator/reference-app (exact AND
- *     identifier-normalized, so light renaming is still caught). k-grams that also occur in the
- *     starter repo or the frozen spec are ignored (quoting the spec is not reuse). Corpus fingerprints
- *     are cached in results/.cache/config-guard-fingerprints.json (keyed by path, size, mtime).
+ *     every app snapshot under results/runs/<id>/app, the added lines of every brownfield run's
+ *     results/runs/<id>/workspace.patch, evaluator/reference-app and every task's hidden referenceDiffs
+ *     (added lines of the upstream diffs) (exact AND identifier-normalized, so light renaming is still
+ *     caught). k-grams that also occur in the starter repo or the frozen spec are ignored (quoting the
+ *     spec is not reuse). Corpus fingerprints are cached in results/.cache/config-guard-fingerprints.json
+ *     (keyed by path, size, mtime).
+ *  4. Banned terms (multi-task benchmark): the union of every non-todo task's bannedTerms (dev AND
+ *     holdout tasks, runner/tasks.ts). Any config file (or file name) containing one is rejected, so a
+ *     config can never name the hidden feature it would be evaluated on.
  *
  * Enforced by researcher/optimizer.ts applyProposal (violations go back to the research agent through
  * researcher/whitelist.ts validateProposal, so its single retry can fix them) and by runner/config.ts
@@ -30,6 +35,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync,
 import { dirname, join, relative } from 'node:path';
 import type { AgentConfig, BinInvocation, ConfigRunAudit } from '../runner/types.js';
 import { REPO_ROOT, resultsDir } from '../runner/env.js';
+import { allBannedTerms, allReferenceDiffPaths } from '../runner/tasks.js';
+import { patchAddedLines } from '../runner/snapshot.js';
 
 // ---------------------------------------------------------------------------
 // Limits and thresholds (documented in README "Anti-cheating guard")
@@ -42,8 +49,12 @@ export const GUARD_LIMITS = {
   scriptFileBytes: 4 * 1024,
   /** config.json, tools.json. */
   jsonFileBytes: 8 * 1024,
-  /** Whole config (every file). */
+  /** Whole config (every file except docs/). */
   totalBytes: 40 * 1024,
+  /** docs/<path> reference files (installed at /opt/frugal/docs, not auto-loaded): each, all together, count. */
+  docsFileBytes: 32 * 1024,
+  docsTotalBytes: 256 * 1024,
+  docsMaxFiles: 64,
   /** Lines in one fenced markdown code block / all fenced code of one markdown file. */
   maxCodeBlockLines: 30,
   maxCodeLinesPerFile: 60,
@@ -91,7 +102,12 @@ export const SIMILARITY = {
   minCoveredTokensForRatioRenamed: 60,
   /** Corpus files larger than this are skipped (bundles, generated output). */
   maxCorpusFileBytes: 256 * 1024,
+  /** Diff/patch corpus files (only their added lines are used) larger than this are skipped. */
+  maxCorpusPatchBytes: 16 * 1024 * 1024,
 } as const;
+
+/** Files of a diff whose added lines are not code worth fingerprinting (lockfiles, translations). */
+const PATCH_SKIP_FILE_RE = /(^|\/)(?:yarn\.lock|Gemfile\.lock|package-lock\.json)$|(^|\/)config\/locales\//;
 
 /** Corpus file extensions (app source). Markdown/JSON/lockfiles are excluded. */
 const CORPUS_EXT_RE = /\.(?:[cm]?[jt]sx?|css|scss|html?|sql)$/i;
@@ -122,7 +138,18 @@ export interface GuardOptions {
    * Defaults: runsDir = <results>/runs, referenceAppDir = evaluator/reference-app,
    * allowDirs (k-grams ignored) = benchmark/starter + benchmark/spec.
    */
-  corpus?: false | { runsDir?: string; referenceAppDir?: string; extraDirs?: string[]; allowDirs?: string[] };
+  corpus?:
+    | false
+    | {
+        runsDir?: string;
+        referenceAppDir?: string;
+        extraDirs?: string[];
+        allowDirs?: string[];
+        /** Diff files whose ADDED lines join the corpus. Default: every task's existing referenceDiffs. */
+        referenceDiffs?: string[];
+      };
+  /** Banned terms (case-insensitive, word-ish). Default: allBannedTerms() (every non-todo task). [] disables. */
+  bannedTerms?: string[];
   /** Fingerprint cache file; false = no cache. Default <results>/.cache/config-guard-fingerprints.json. */
   cacheFile?: string | false;
   /** Skip the total-size check (used when only the changed files of a proposal are checked). */
@@ -140,17 +167,30 @@ export function guardConfig(input: string | Record<string, string>, opts: GuardO
   const files = typeof input === 'string' ? readConfigDirFiles(input) : input;
   const violations: GuardViolation[] = [];
   let total = 0;
+  let docsTotal = 0;
+  let docsCount = 0;
+  const banned = bannedTermMatchers(opts.bannedTerms ?? allBannedTerms());
   for (const [file, content] of Object.entries(files)) {
     if (META_FILES.has(file)) continue;
     const bytes = Buffer.byteLength(content, 'utf8');
-    total += bytes;
+    const isDoc = file.startsWith('docs/');
+    if (isDoc) {
+      docsTotal += bytes;
+      docsCount++;
+    } else total += bytes;
     const kind = fileKind(file);
-    const limit = kind === 'script' ? GUARD_LIMITS.scriptFileBytes : kind === 'json' ? GUARD_LIMITS.jsonFileBytes : GUARD_LIMITS.mdFileBytes;
-    if (bytes > limit) violations.push({ file, rule: 'size.file', detail: `${bytes} bytes > ${limit} (${kind} limit)` });
+    const limit = isDoc ? GUARD_LIMITS.docsFileBytes : kind === 'script' ? GUARD_LIMITS.scriptFileBytes : kind === 'json' ? GUARD_LIMITS.jsonFileBytes : GUARD_LIMITS.mdFileBytes;
+    if (bytes > limit) violations.push({ file, rule: 'size.file', detail: `${bytes} bytes > ${limit} (${isDoc ? 'docs' : kind} limit)` });
     violations.push(...scanFile(file, content, kind));
+    const hit = bannedTermIn(`${file}\n${content}`, banned);
+    if (hit) violations.push({ file, rule: 'banned-term', detail: `contains the banned term "${hit.term}" (${JSON.stringify(hit.match)}): configs must not name a benchmark task's hidden feature` });
   }
   if (!opts.skipTotal && total > GUARD_LIMITS.totalBytes)
     violations.push({ file: '*', rule: 'size.total', detail: `config totals ${total} bytes > ${GUARD_LIMITS.totalBytes}` });
+  if (!opts.skipTotal && docsTotal > GUARD_LIMITS.docsTotalBytes)
+    violations.push({ file: 'docs/', rule: 'size.docs-total', detail: `docs/ totals ${docsTotal} bytes > ${GUARD_LIMITS.docsTotalBytes}` });
+  if (!opts.skipTotal && docsCount > GUARD_LIMITS.docsMaxFiles)
+    violations.push({ file: 'docs/', rule: 'size.docs-count', detail: `${docsCount} docs/ files > ${GUARD_LIMITS.docsMaxFiles}` });
 
   const similarity: GuardResult['similarity'] = [];
   if (opts.corpus !== false) {
@@ -175,6 +215,34 @@ export function guardConfig(input: string | Record<string, string>, opts: GuardO
   return { ok: violations.length === 0, violations, similarity };
 }
 
+/** Case-insensitive, word-ish matcher of a banned term: word parts (split at spaces, _, - and camelCase) may be joined by spaces, _ or -. */
+export function bannedTermRegex(term: string): RegExp {
+  const parts = term
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return new RegExp(parts.join('[\\s_-]*'), 'i');
+}
+
+function bannedTermMatchers(terms: string[]): { term: string; re: RegExp }[] {
+  return [...new Set(terms.map((t) => t.trim()).filter(Boolean))].map((term) => ({ term, re: bannedTermRegex(term) }));
+}
+
+function bannedTermIn(text: string, matchers: { term: string; re: RegExp }[]): { term: string; match: string } | null {
+  for (const m of matchers) {
+    const x = m.re.exec(text);
+    if (x) return { term: m.term, match: x[0] };
+  }
+  return null;
+}
+
+/** First banned term (of `terms`, default every non-todo task's) found in `text`, or null. */
+export function findBannedTerm(text: string, terms: string[] = allBannedTerms()): { term: string; match: string } | null {
+  return bannedTermIn(text, bannedTermMatchers(terms));
+}
+
 /** One violation per line, for error messages and the research agent's retry. */
 export function formatViolations(v: GuardViolation[]): string {
   return v.map((x) => `- ${x.file}: [${x.rule}] ${x.detail}`).join('\n');
@@ -188,6 +256,7 @@ export function configFilesOf(cfg: AgentConfig): Record<string, string> {
   for (const b of cfg.bin ?? []) out[`bin/${b.name}`] = b.content;
   for (const a of cfg.agents ?? []) out[`agents/${a.name}.md`] = a.content;
   for (const c of cfg.commands ?? []) out[`commands/${c.name}.md`] = c.content;
+  for (const d of cfg.docs ?? []) out[`docs/${d.path}`] = d.content;
   if (cfg.claudeCode) out['config.json'] = JSON.stringify({ claudeCode: cfg.claudeCode });
   return out;
 }
@@ -601,8 +670,8 @@ function listCorpusFiles(root: string): string[] {
   return out;
 }
 
-/** Every <runsDir>/<run>/app directory (minus runs of excluded config hashes). */
-function snapshotDirs(runsDir: string, excludeHashes: Set<string>): string[] {
+/** Run dirs under runsDir (minus runs of excluded config hashes). */
+function runDirs(runsDir: string, excludeHashes: Set<string>): string[] {
   if (!existsSync(runsDir)) return [];
   return readdirSync(runsDir, { withFileTypes: true })
     .filter((e) => e.isDirectory())
@@ -615,14 +684,38 @@ function snapshotDirs(runsDir: string, excludeHashes: Set<string>): string[] {
         return true;
       }
     })
-    .map((e) => join(runsDir, e.name, 'app'))
+    .map((e) => join(runsDir, e.name));
+}
+
+/** Every <runsDir>/<run>/app directory (minus runs of excluded config hashes). */
+function snapshotDirs(runsDir: string, excludeHashes: Set<string>): string[] {
+  return runDirs(runsDir, excludeHashes)
+    .map((d) => join(d, 'app'))
     .filter((d) => existsSync(d));
+}
+
+/** Every <runsDir>/<run>/workspace.patch (git-diff tasks; minus runs of excluded config hashes). */
+function snapshotPatches(runsDir: string, excludeHashes: Set<string>): string[] {
+  return runDirs(runsDir, excludeHashes)
+    .map((d) => join(d, 'workspace.patch'))
+    .filter((f) => existsSync(f));
+}
+
+/** The code a diff adds (added lines of code files; lockfiles and translations skipped), as one text. */
+export function diffAddedCode(patch: string): string {
+  return patchAddedLines(patch)
+    .filter((f) => !PATCH_SKIP_FILE_RE.test(f.path))
+    .map((f) => f.text)
+    .join('\n');
 }
 
 function loadCorpus(opts: GuardOptions): Corpus {
   const c = opts.corpus || {};
   const runsDir = c.runsDir ?? join(resultsDir(), 'runs');
-  const roots = [...snapshotDirs(runsDir, new Set(opts.excludeConfigHashes ?? [])), c.referenceAppDir ?? join(REPO_ROOT, 'evaluator', 'reference-app'), ...(c.extraDirs ?? [])];
+  const excluded = new Set(opts.excludeConfigHashes ?? []);
+  const roots = [...snapshotDirs(runsDir, excluded), c.referenceAppDir ?? join(REPO_ROOT, 'evaluator', 'reference-app'), ...(c.extraDirs ?? [])];
+  // Diff files: only their added lines count (brownfield run patches + the tasks' hidden upstream diffs).
+  const diffFiles = [...snapshotPatches(runsDir, excluded), ...(c.referenceDiffs ?? allReferenceDiffPaths())];
   const cachePath = opts.cacheFile === false ? null : opts.cacheFile ?? join(resultsDir(), '.cache', 'config-guard-fingerprints.json');
   let cache: CacheFile = { version: CACHE_VERSION, files: {} };
   if (cachePath && existsSync(cachePath)) {
@@ -636,19 +729,24 @@ function loadCorpus(opts: GuardOptions): Corpus {
   let dirty = false;
   const corpus: Corpus = { exact: new Map(), norm: new Map(), files: [], allow: { exact: new Set(), norm: new Set() } };
   const seen = new Set<string>();
-  for (const root of roots) {
-    for (const file of listCorpusFiles(root)) {
+  const entries: { file: string; diff: boolean }[] = [
+    ...roots.flatMap((root) => listCorpusFiles(root).map((file) => ({ file, diff: false }))),
+    ...diffFiles.map((file) => ({ file, diff: true })),
+  ];
+  {
+    for (const { file, diff } of entries) {
       let st;
       try {
         st = statSync(file);
       } catch {
         continue;
       }
-      if (st.size > SIMILARITY.maxCorpusFileBytes) continue;
+      if (!st.isFile() || st.size > (diff ? SIMILARITY.maxCorpusPatchBytes : SIMILARITY.maxCorpusFileBytes)) continue;
       seen.add(file);
       let fp = cache.files[file];
       if (!fp || fp.size !== st.size || fp.mtimeMs !== st.mtimeMs) {
-        const f = fingerprint(readFileSync(file, 'utf8'));
+        const text = readFileSync(file, 'utf8');
+        const f = fingerprint(diff ? diffAddedCode(text) : text);
         fp = { size: st.size, mtimeMs: st.mtimeMs, exact: f.exact, norm: f.norm };
         cache.files[file] = fp;
         dirty = true;
@@ -748,11 +846,28 @@ function matchAgainst(text: string, corpus: Pick<Corpus, 'exact' | 'norm' | 'fil
 
 /** Similarity of config files against one directory (uncached; used for the post-run snapshot check). */
 export function similarityAgainstDir(files: Record<string, string>, dir: string): { configFile: string; appFile: string; matched: number; ratio: number; channel: 'exact' | 'norm'; exceeds: boolean } | null {
-  const corpus: Corpus = { exact: new Map(), norm: new Map(), files: [], allow: loadCorpus({ corpus: { runsDir: '/nonexistent', referenceAppDir: '/nonexistent' }, cacheFile: false }).allow };
+  const texts: { name: string; text: string }[] = [];
   for (const f of listCorpusFiles(dir)) {
     if (statSync(f).size > SIMILARITY.maxCorpusFileBytes) continue;
-    const fp = fingerprint(readFileSync(f, 'utf8'));
-    const idx = corpus.files.push(relative(dir, f).split('\\').join('/')) - 1;
+    texts.push({ name: relative(dir, f).split('\\').join('/'), text: readFileSync(f, 'utf8') });
+  }
+  return similarityAgainstTexts(files, texts);
+}
+
+/** Similarity of config files against named texts (e.g. the added lines of a workspace patch per file). */
+export function similarityAgainstTexts(
+  files: Record<string, string>,
+  texts: { name: string; text: string }[],
+): { configFile: string; appFile: string; matched: number; ratio: number; channel: 'exact' | 'norm'; exceeds: boolean } | null {
+  const corpus: Corpus = {
+    exact: new Map(),
+    norm: new Map(),
+    files: [],
+    allow: loadCorpus({ corpus: { runsDir: '/nonexistent', referenceAppDir: '/nonexistent', referenceDiffs: [] }, cacheFile: false }).allow,
+  };
+  for (const t of texts) {
+    const fp = fingerprint(t.text);
+    const idx = corpus.files.push(t.name) - 1;
     for (const h of fp.exact) if (!corpus.exact.has(h)) corpus.exact.set(h, idx);
     for (const h of fp.norm) if (!corpus.norm.has(h)) corpus.norm.set(h, idx);
   }
@@ -794,6 +909,8 @@ export function auditCodingRun(opts: {
   logMissing?: boolean;
   hookCounts: Record<string, number>;
   appDir?: string;
+  /** git-diff tasks: the run's workspace.patch (its added lines are compared instead of an app dir). */
+  patchFile?: string;
 }): ConfigRunAudit {
   const binCounts: Record<string, number> = {};
   const writes = new Set<string>();
@@ -807,7 +924,15 @@ export function auditCodingRun(opts: {
   if (opts.logMissing && opts.config.bin?.length) notes.push('the bin audit log was missing (no bin script ran, or the log was removed)');
   if (opts.malformedLogLines) notes.push(`${opts.malformedLogLines} malformed audit log line(s)`);
   let snapshotOverlap: ConfigRunAudit['snapshotOverlap'] = null;
-  if (opts.appDir && existsSync(opts.appDir)) {
+  if (opts.patchFile && existsSync(opts.patchFile)) {
+    try {
+      snapshotOverlap = similarityAgainstTexts(configFilesOf(opts.config), patchAddedLines(readFileSync(opts.patchFile, 'utf8')).map((f) => ({ name: f.path, text: f.text })));
+      if (snapshotOverlap?.exceeds)
+        reasons.push(`workspace patch reproduces config content: ${snapshotOverlap.matched} tokens of ${snapshotOverlap.configFile} found in ${snapshotOverlap.appFile}`);
+    } catch (e) {
+      notes.push(`patch similarity check failed: ${(e as Error).message}`);
+    }
+  } else if (opts.appDir && existsSync(opts.appDir)) {
     try {
       snapshotOverlap = similarityAgainstDir(configFilesOf(opts.config), opts.appDir);
       if (snapshotOverlap?.exceeds)

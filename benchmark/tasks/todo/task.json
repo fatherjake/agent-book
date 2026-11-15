@@ -1,0 +1,16 @@
+{
+  "$comment": "The original todo benchmark. 'builtin:todo' keeps the original code paths: prompt (runner/claude-code.ts, runner/agent.ts), images (benchmark/docker, runner/claude-code-image.ts) and evaluator (evaluator/index.ts). Its files stay where they are (benchmark/spec, benchmark/starter, benchmark/docker).",
+  "id": "todo",
+  "title": "Full-stack todo app (greenfield)",
+  "kind": "greenfield",
+  "promptFile": "builtin:todo",
+  "specDir": "../../spec",
+  "image": { "builder": "builtin:todo" },
+  "workspace": { "path": "/workspace", "snapshot": "tree" },
+  "sandbox": { "cpus": 2, "memory": "2g", "pidsLimit": 512 },
+  "evaluator": "builtin:todo",
+  "browserAgent": "required",
+  "minPassRate": 1.0,
+  "bannedTerms": [],
+  "referenceDiffs": []
+}

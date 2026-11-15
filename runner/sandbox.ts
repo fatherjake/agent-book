@@ -206,6 +206,15 @@ export interface CreateSandboxOptions {
   extraTmpfs?: string[];
   /** HOME inside the container (default /tmp). */
   home?: string;
+  /** /dev/shm size (--shm-size), e.g. '512m'. Default: docker's. */
+  shmSize?: string;
+  /** Extra anonymous writable volumes (removed with the container), e.g. ['/data']. */
+  extraVolumes?: string[];
+  /**
+   * Command run as the default user right after creation (e.g. a task's services start hook). A non-zero
+   * exit destroys the container and throws.
+   */
+  startHook?: { command: string; timeoutSec?: number };
 }
 
 let storageOptSupported: boolean | undefined;
@@ -316,6 +325,40 @@ export class DockerSandbox implements Sandbox {
     });
   }
 
+  /**
+   * Copy a directory inside the container: read as `fromUser`, written as `toUser` (e.g. a root-owned,
+   * read-only copy of node's /workspace). Two docker exec processes joined by a host pipe.
+   */
+  async copyWithin(src: string, dst: string, opts: { fromUser?: string; toUser?: string; exclude?: string[]; timeoutMs?: number } = {}): Promise<void> {
+    const tarArgs = ['tar', '-c', '-C', src, ...(opts.exclude ?? []).map((e) => `--exclude=${e}`), '-f', '-', '.'];
+    await new Promise<void>((resolve, reject) => {
+      const from = spawn('docker', ['exec', '-u', opts.fromUser ?? this.defaultUser, this.containerId, ...tarArgs], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const to = spawn('docker', ['exec', '-i', '-u', opts.toUser ?? 'root', this.containerId, 'sh', '-c', 'mkdir -p -- "$1" && tar -x --no-same-owner -C "$1" -f -', 'sh', dst], {
+        stdio: ['pipe', 'ignore', 'pipe'],
+      });
+      let fromErr = '';
+      let toErr = '';
+      from.stderr.on('data', (c) => (fromErr += c));
+      to.stderr.on('data', (c) => (toErr += c));
+      from.stdout.pipe(to.stdin);
+      to.stdin.on('error', () => {});
+      const timer = setTimeout(() => {
+        from.kill('SIGKILL');
+        to.kill('SIGKILL');
+      }, opts.timeoutMs ?? 600_000);
+      let fromCode: number | null = null;
+      from.on('error', reject);
+      to.on('error', reject);
+      from.on('close', (c) => (fromCode = c));
+      to.on('close', (c) => {
+        clearTimeout(timer);
+        // GNU tar exits 1 when files changed while reading (or unreadable files were skipped); the copy is usable.
+        if (c !== 0 || (fromCode !== 0 && fromCode !== 1 && fromCode !== null)) reject(new Error(`copyWithin ${src} -> ${dst} failed (src ${fromCode}, dst ${c}): ${fromErr.slice(-500)} ${toErr.slice(-500)}`));
+        else resolve();
+      });
+    });
+  }
+
   /** Disk usage of a path in MiB (du -sk). Returns NaN on failure. */
   async diskUsageMB(path = '/workspace'): Promise<number> {
     const r = await docker(['exec', '-u', this.defaultUser, this.containerId, 'du', '-sk', path], { timeoutMs: 60_000 });
@@ -367,6 +410,8 @@ export async function createSandbox(opts: CreateSandboxOptions): Promise<DockerS
     '-e', 'CI=1',
   ];
   for (const t of opts.extraTmpfs ?? []) base.push('--tmpfs', t);
+  for (const v of opts.extraVolumes ?? []) base.push('-v', v);
+  if (opts.shmSize) base.push('--shm-size', opts.shmSize);
   for (const [k, v] of Object.entries(labels)) base.push('--label', `${k}=${v}`);
   for (const [k, v] of Object.entries(opts.env ?? {})) base.push('-e', `${k}=${v}`);
   for (const p of opts.publish ?? []) base.push('-p', `127.0.0.1:${p.hostPort ?? 0}:${p.containerPort}`);
@@ -393,6 +438,11 @@ export async function createSandbox(opts: CreateSandboxOptions): Promise<DockerS
   const sb = new DockerSandbox(containerId, opts.imageId ?? '', name, user);
   try {
     if (opts.specDir) await sb.copyIn(opts.specDir, '/spec', { user: 'root' });
+    if (opts.startHook) {
+      const r = await sb.exec(opts.startHook.command, { timeoutSec: opts.startHook.timeoutSec ?? 300 });
+      if (r.exitCode !== 0)
+        throw new Error(`sandbox start hook failed (exit ${r.exitCode}${r.timedOut ? ', timed out' : ''}): ${opts.startHook.command}: ${(r.stderr || r.stdout).trim().slice(-1500)}`);
+    }
   } catch (e) {
     await sb.destroy();
     throw e;

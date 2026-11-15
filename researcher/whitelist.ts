@@ -4,7 +4,7 @@
  * agent's raw proposal and again (defense in depth) by the optimizer before writing files.
  */
 import type { AgentBackend, ToolName } from '../runner/types.js';
-import { BIN_SHEBANG_RE, CLAUDE_CODE_ENV_ALLOWLIST, CLAUDE_CODE_HOOK_EVENTS, CLAUDE_CODE_SETTINGS_DENYLIST } from '../runner/claude-code.js';
+import { BIN_SHEBANG_RE, CLAUDE_CODE_ENV_ALLOWLIST, CLAUDE_CODE_HOOK_EVENTS, CLAUDE_CODE_SETTINGS_DENYLIST, DOC_PATH_RE } from '../runner/claude-code.js';
 import { MAX_AGENTS, MAX_BIN_SCRIPTS, MAX_COMMANDS, validateClaudeCode } from '../runner/config.js';
 import { GUARD_LIMITS, guardConfig, type GuardOptions } from './config-guard.js';
 
@@ -56,6 +56,10 @@ export const SKILL_PATH_RE = /^skills\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.md$/;
 export const BIN_PATH_RE = /^bin\/[a-z][a-z0-9_-]{0,31}$/;
 export const AGENT_PATH_RE = /^agents\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.md$/;
 export const COMMAND_PATH_RE = /^commands\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.md$/;
+/** docs/<path>: reference files installed read-only at /opt/frugal/docs (not auto-loaded). */
+export function isDocPath(p: string): boolean {
+  return p.startsWith('docs/') && DOC_PATH_RE.test(p.slice(5));
+}
 
 export const MAX_FILE_CHARS = 60_000;
 export const MAX_SKILLS = 12;
@@ -99,7 +103,7 @@ export type ProposalFiles = {
   'CLAUDE.md'?: string | null;
 } & { [skillPath: `skills/${string}.md`]: string | null } & { [binPath: `bin/${string}`]: string | null } & {
   [agentPath: `agents/${string}.md`]: string | null;
-} & { [commandPath: `commands/${string}.md`]: string | null };
+} & { [commandPath: `commands/${string}.md`]: string | null } & { [docPath: `docs/${string}`]: string | null };
 
 export interface Proposal {
   hypothesis: string;
@@ -111,9 +115,9 @@ export function isAllowedPath(p: string): boolean {
   return p === 'system-prompt.md' || p === 'tools.json' || p === 'config.json' || p === 'CLAUDE.md' || SKILL_PATH_RE.test(p) || isClaudeCodeOnlyPath(p);
 }
 
-/** bin/*, agents/*.md, commands/*.md: only for configs with backend 'claude-code'. */
+/** bin/*, agents/*.md, commands/*.md, docs/**: only for configs with backend 'claude-code'. */
 export function isClaudeCodeOnlyPath(p: string): boolean {
-  return BIN_PATH_RE.test(p) || AGENT_PATH_RE.test(p) || COMMAND_PATH_RE.test(p);
+  return BIN_PATH_RE.test(p) || AGENT_PATH_RE.test(p) || COMMAND_PATH_RE.test(p) || isDocPath(p);
 }
 
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
@@ -268,19 +272,20 @@ export function validateProposalFiles(files: unknown, opts: WhitelistOptions): s
   let bins = 0;
   let agents = 0;
   let commands = 0;
+  let docs = 0;
   for (const [path, content] of entries) {
     if (!isAllowedPath(path)) {
       errs.push(
-        `path "${path}" is outside the allowed modification surface (system-prompt.md, tools.json, config.json, CLAUDE.md, skills/<name>.md${opts.backend === 'claude-code' ? ', bin/<name>, agents/<name>.md, commands/<name>.md' : ''})`,
+        `path "${path}" is outside the allowed modification surface (system-prompt.md, tools.json, config.json, CLAUDE.md, skills/<name>.md${opts.backend === 'claude-code' ? ', bin/<name>, agents/<name>.md, commands/<name>.md, docs/<path>' : ''})`,
       );
       continue;
     }
     if (isClaudeCodeOnlyPath(path)) {
-      if (opts.backend !== 'claude-code') errs.push(`${path}: bin/, agents/ and commands/ are only used by configs with backend "claude-code"`);
+      if (opts.backend !== 'claude-code') errs.push(`${path}: bin/, agents/, commands/ and docs/ are only used by configs with backend "claude-code"`);
       else if (content !== null && typeof content !== 'string') errs.push(`${path} must be a string or null (delete)`);
       else if (typeof content === 'string') {
         const isBin = path.startsWith('bin/');
-        const max = isBin ? GUARD_LIMITS.scriptFileBytes : GUARD_LIMITS.mdFileBytes;
+        const max = isBin ? GUARD_LIMITS.scriptFileBytes : isDocPath(path) ? GUARD_LIMITS.docsFileBytes : GUARD_LIMITS.mdFileBytes;
         if (!content.trim()) errs.push(`${path} must not be empty (use null to delete)`);
         else if (Buffer.byteLength(content, 'utf8') > max) errs.push(`${path} exceeds ${max} bytes`);
         else if (content.includes('\0')) errs.push(`${path} must be text`);
@@ -288,6 +293,7 @@ export function validateProposalFiles(files: unknown, opts: WhitelistOptions): s
       }
       if (path.startsWith('bin/')) bins++;
       else if (path.startsWith('agents/')) agents++;
+      else if (isDocPath(path)) docs++;
       else commands++;
       continue;
     }
@@ -319,6 +325,7 @@ export function validateProposalFiles(files: unknown, opts: WhitelistOptions): s
   if (bins > MAX_BIN_SCRIPTS) errs.push(`too many bin/ changes (max ${MAX_BIN_SCRIPTS})`);
   if (agents > MAX_AGENTS) errs.push(`too many agents/ changes (max ${MAX_AGENTS})`);
   if (commands > MAX_COMMANDS) errs.push(`too many commands/ changes (max ${MAX_COMMANDS})`);
+  if (docs > GUARD_LIMITS.docsMaxFiles) errs.push(`too many docs/ changes (max ${GUARD_LIMITS.docsMaxFiles})`);
   if (!errs.length && opts.guard !== false) errs.push(...guardProposalFiles(files as Record<string, unknown>, opts.guard ?? {}));
   return errs;
 }
@@ -346,8 +353,9 @@ export function claudeCodeSurfaceDoc(): string {
   return `- "bin/<name>" (name [a-z][a-z0-9_-]*, max ${MAX_BIN_SCRIPTS}, <= ${GUARD_LIMITS.scriptFileBytes} bytes each, shebang required: #!/bin/sh, #!/bin/bash, #!/usr/bin/env node): helper scripts installed read-only at /opt/frugal/bin (on PATH) in the coding container. Use them to replace many agent turns with one command, e.g. a "check" that builds, starts the server on a spare port with a temp DATABASE_PATH, smoke-tests the API with fetch and prints ONLY errors; or a compact project map. They may run builds, tests, linters, greps and node checks and may write only under /tmp. /opt/frugal/bin/<name> is a /bin/sh audit wrapper around your script: call scripts by name (e.g. "smoke 4789") or path, never as "node /opt/frugal/bin/<name>". Every run is logged; a bin script that creates or modifies app source fails the run. null deletes.
 - "agents/<name>.md" (max ${MAX_AGENTS}): custom subagents (~/.claude/agents/). Frontmatter keys: name, description, tools, disallowedTools, color, model (only "inherit"). Subagents start a fresh conversation with its own overhead: use them only when that clearly saves tokens (e.g. a focused reviewer). null deletes.
 - "commands/<name>.md" (max ${MAX_COMMANDS}): slash commands (~/.claude/commands/). Frontmatter keys: description, argument-hint, allowed-tools, disable-model-invocation, model (only "inherit"). null deletes.
+- "docs/<path>" (any text files, up to 3 directory levels, <= ${GUARD_LIMITS.docsFileBytes / 1024} KB each, <= ${GUARD_LIMITS.docsTotalBytes / 1024} KB and ${GUARD_LIMITS.docsMaxFiles} files in total): reference material installed read-only at /opt/frugal/docs/<path> in the coding container (e.g. a codebase map or a feature-area guide). NOT loaded into context: it costs nothing until the agent reads a file, so tell it where to look (CLAUDE.md, system prompt or a skill). The guard rules below apply to docs too. null deletes.
 - claudeCode.settings.hooks: Claude Code hooks, {"<Event>": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "/opt/frugal/bin/<name> [plain args]", "timeout": 10}]}]}. Events: ${CLAUDE_CODE_HOOK_EVENTS.join(', ')}. Commands may only call your own bin scripts (no shell syntax). Verified in Claude Code 2.1.325: the hook gets JSON on stdin (tool_name, tool_input, tool_response for PostToolUse; error for PostToolUseFailure). A PostToolUse hook can REPLACE what the model sees by printing {"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":{...tool_response, "stdout": "<trimmed>"}}} (Bash tool_response = {stdout, stderr, interrupted, isImage, noOutputExpected}). PostToolUseFailure (failed commands) cannot replace output. A PreToolUse hook can rewrite the command with {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{...tool_input,"command":"<new>"}}}, e.g. pipe noisy commands through a clipping bin script (bash; keep the exit code with \${PIPESTATUS[0]}); this trims failing builds too. Printing nothing leaves the call unchanged. When a hook replaces output, also write "frugal: orig_chars=<N> new_chars=<M> tool_use_id=<tool_use_id from the input>" to stderr (exit 0 stderr never reaches the model) so run profiles can report the saving.
-ANTI-CHEATING GUARD (automatic; violations reject the proposal): configs must not carry application code. Rejected: Express routes/handlers or server imports, the todos SQL schema or SQL data-access code, React components, JSX/HTML markup, fetch wrappers for /api, CSS rule blocks or design-token sheets (many hex colors + px values), scripts or snippets that write files into the app (frontend/, backend/, /workspace), base64/hex/compressed blobs or decoders, long string literals, more than ${GUARD_LIMITS.maxCodeBlockLines} lines in one code block or ${GUARD_LIMITS.maxCodeLinesPerFile} per markdown file, files over ${GUARD_LIMITS.mdFileBytes} bytes (markdown) / ${GUARD_LIMITS.scriptFileBytes} bytes (scripts), configs over ${GUARD_LIMITS.totalBytes} bytes, and any text that overlaps code from earlier runs' app snapshots (even renamed). Describe requirements in prose and give workflow advice; the coding agent must write the app itself every run.`;
+ANTI-CHEATING GUARD (automatic; violations reject the proposal): configs must not name any benchmark task's hidden feature (a fixed list of banned terms) and must not carry application code. Rejected: Express routes/handlers or server imports, the todos SQL schema or SQL data-access code, React components, JSX/HTML markup, fetch wrappers for /api, CSS rule blocks or design-token sheets (many hex colors + px values), scripts or snippets that write files into the app (frontend/, backend/, /workspace), base64/hex/compressed blobs or decoders, long string literals, more than ${GUARD_LIMITS.maxCodeBlockLines} lines in one code block or ${GUARD_LIMITS.maxCodeLinesPerFile} per markdown file, files over ${GUARD_LIMITS.mdFileBytes} bytes (markdown) / ${GUARD_LIMITS.scriptFileBytes} bytes (scripts), configs over ${GUARD_LIMITS.totalBytes} bytes, and any text that overlaps code from earlier runs' app snapshots (even renamed). Describe requirements in prose and give workflow advice; the coding agent must write the app itself every run.`;
 }
 
 export function validateProposal(raw: unknown, opts: WhitelistOptions): { ok: true; proposal: Proposal } | { ok: false; errors: string[] } {

@@ -65,7 +65,7 @@ export interface ApplyOptions {
   research?: { evidence?: string; expectedSavings?: string };
 }
 
-/** Read a config directory's modifiable files (config.json, system-prompt.md, tools.json, CLAUDE.md, skills/*.md, bin/*, agents/*.md, commands/*.md). */
+/** Read a config directory's modifiable files (config.json, system-prompt.md, tools.json, CLAUDE.md, skills/*.md, bin/*, agents/*.md, commands/*.md, docs/**). */
 export function readConfigFiles(configId: string, configsRoot: string = DEFAULT_CONFIGS_ROOT): Record<string, string> {
   const dir = configDir(configId, configsRoot);
   if (!existsSync(dir)) throw new OptimizerError(`config directory not found: ${dir}`);
@@ -82,6 +82,18 @@ export function readConfigFiles(configId: string, configsRoot: string = DEFAULT_
       if (isAllowedPath(rel) && statSync(join(d, f)).isFile()) out[rel] = readFileSync(join(d, f), 'utf8');
     }
   }
+  // docs/ may be nested (docs/<dir>/<file>, up to 3 levels).
+  const walkDocs = (d: string, rel: string, depth: number) => {
+    if (!existsSync(d) || depth > 4) return;
+    for (const f of readdirSync(d).sort()) {
+      if (f.startsWith('.')) continue;
+      const p = join(d, f);
+      const r = `${rel}/${f}`;
+      if (statSync(p).isDirectory()) walkDocs(p, r, depth + 1);
+      else if (isAllowedPath(r) && statSync(p).isFile()) out[r] = readFileSync(p, 'utf8');
+    }
+  };
+  walkDocs(join(dir, 'docs'), 'docs', 1);
   return out;
 }
 

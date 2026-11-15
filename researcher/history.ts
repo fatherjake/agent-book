@@ -7,6 +7,8 @@
  *  - Dev failures include check ids and short, truncated messages. Messages of 'browser'
  *    checks are dropped (they may paraphrase hidden scenario goals); only their ids are shown.
  *  - No evaluator source, scenario text, report paths or screenshots are included.
+ *  - Multi-task: only experiments (and the best) of the dev task (`taskId`, default todo) are shown;
+ *    runs of any other task (e.g. a different holdout task) are never read.
  */
 import type { CheckResult } from '../runner/types.js';
 import type { Db, ExperimentListItem } from '../storage/db.js';
@@ -15,6 +17,8 @@ export interface HistoryOptions {
   maxExperiments?: number;
   maxMessageChars?: number;
   maxFailedChecksPerExperiment?: number;
+  /** Dev task whose experiments are shown (default 'todo'). */
+  taskId?: string;
 }
 
 export interface ExperimentFailureInfo {
@@ -63,8 +67,10 @@ const oneLine = (s: string, max: number) => {
 /** Collect dev-suite failure info for one experiment (holdout data is never touched). */
 export function devFailures(db: Db, experimentId: string, maxMessageChars = 100): ExperimentFailureInfo {
   const info: ExperimentFailureInfo = { checks: new Map(), runStatuses: new Map() };
+  const taskId = db.getExperiment(experimentId)?.taskId;
   for (const run of db.listRuns({ experimentId })) {
     if (run.phase === 'holdout' || run.suite !== 'dev') continue;
+    if (taskId && run.taskId !== taskId) continue; // another task's runs (e.g. a holdout task) are never read
     if (run.status !== 'completed' && run.status !== 'running') info.runStatuses.set(run.status, (info.runStatuses.get(run.status) ?? 0) + 1);
     for (const ev of db.listEvaluations(run.runId)) {
       if (ev.suite !== 'dev') continue;
@@ -131,9 +137,10 @@ export function buildHistoryDigest(db: Db, options: HistoryOptions = {}): string
     maxExperiments: options.maxExperiments ?? 40,
     maxMessageChars: options.maxMessageChars ?? 100,
     maxFailedChecksPerExperiment: options.maxFailedChecksPerExperiment ?? 6,
+    taskId: options.taskId ?? 'todo',
   };
-  const all = db.listExperimentsWithAggregates();
-  const best = db.getBestVerified();
+  const all = db.listExperimentsWithAggregates({ taskId: opts.taskId });
+  const best = db.getBestVerified(opts.taskId);
   const out: string[] = [];
 
   if (best) {

@@ -69,6 +69,8 @@ export interface StartGatewayOptions {
   role: AgentRole;
   runId?: string;
   experimentId?: string;
+  /** (additive) Task of the coding run; recorded on each usage record. */
+  taskId?: string;
   usageFile?: string;
   limits?: { maxTotalTokens?: number; maxModelCalls?: number };
   onUsageRecord?: (r: UsageRecord) => void;
@@ -370,7 +372,7 @@ export async function startGateway(opts: StartGatewayOptions): Promise<GatewayHa
   if (opts.token !== undefined && !isTestUpstream) throw new Error('gateway: the `token` option is only allowed with a loopback test upstream');
   if (!token && !opts.passthroughAuth) throw new Error(SETUP_TOKEN_HELP);
 
-  const tracker = new TokenTracker({ role: opts.role, runId: opts.runId, experimentId: opts.experimentId, usageFile: opts.usageFile, onRecord: opts.onUsageRecord });
+  const tracker = new TokenTracker({ role: opts.role, runId: opts.runId, experimentId: opts.experimentId, taskId: opts.taskId, usageFile: opts.usageFile, onRecord: opts.onUsageRecord });
   const client = upstream.protocol === 'https:' ? https : http;
   const agent = upstream.protocol === 'https:' ? new https.Agent({ keepAlive: true, maxSockets: 32 }) : new http.Agent({ keepAlive: true, maxSockets: 32 });
 

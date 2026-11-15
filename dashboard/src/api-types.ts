@@ -45,6 +45,8 @@ export interface Overview {
 
 export interface ExperimentRow {
   id: string;
+  /** Benchmark task the experiment ran on (docs/TASKS.md); 'todo' for older rows. */
+  taskId: string;
   createdAt: string;
   provider: string;
   model: string;
@@ -63,7 +65,7 @@ export interface ExperimentRow {
   /** Median wall clock per run: coding start → end of evaluation. */
   medianDurationMs: number | null;
   visualScore: number | null;
-  /** (bestTokens - medianTokens) / bestTokens * 100 (storage/db.ts semantics); positive = fewer tokens than the best. */
+  /** (bestTokens - medianTokens) / bestTokens * 100 vs the best of the experiment's own task; positive = fewer tokens than the best. */
   improvementVsBestPct: number | null;
   isMock: boolean;
   /** Flagged as cheating by a human (directly, or inherited from the parent config). */

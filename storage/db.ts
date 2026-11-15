@@ -42,7 +42,8 @@ export type SessionStatus = 'running' | 'interrupted' | 'stopped';
 // Schema
 // ---------------------------------------------------------------------------
 
-const MIGRATIONS: string[] = [
+/** Schema migrations; index i upgrades user_version i → i+1. Exported for migration tests. */
+export const MIGRATIONS: string[] = [
   /* v1 */ `
   CREATE TABLE configs (
     config_id   TEXT PRIMARY KEY,
@@ -270,7 +271,20 @@ const MIGRATIONS: string[] = [
   CREATE TRIGGER no_delete_flags BEFORE DELETE ON flags BEGIN SELECT RAISE(ABORT, 'append-only: flags'); END;
   CREATE TRIGGER no_update_flags BEFORE UPDATE ON flags BEGIN SELECT RAISE(ABORT, 'immutable: flags'); END;
   `,
+  /* v5: multi-task benchmark (docs/TASKS.md). Every run, experiment and promotion belongs to a task; existing rows are todo. */ `
+  ALTER TABLE runs ADD COLUMN task_id TEXT NOT NULL DEFAULT 'todo';
+  ALTER TABLE experiments ADD COLUMN task_id TEXT NOT NULL DEFAULT 'todo';
+  ALTER TABLE best_history ADD COLUMN task_id TEXT NOT NULL DEFAULT 'todo';
+  CREATE INDEX idx_runs_task ON runs(task_id);
+  CREATE INDEX idx_experiments_task ON experiments(task_id);
+  CREATE INDEX idx_best_history_task ON best_history(task_id);
+  `,
 ];
+
+/** Schema version that added task_id (runs, experiments, best_history). */
+export const TASK_SCHEMA_VERSION = 5;
+/** Task of rows written before schema v5 (and the default everywhere). */
+export const DEFAULT_TASK = 'todo';
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
 
@@ -350,6 +364,8 @@ export interface ExperimentRow {
   holdoutPassed: boolean | null;
   error: string | null;
   notes: string | null;
+  /** Benchmark task the experiment ran on (its dev task; holdout runs may use another task). */
+  taskId: string;
 }
 
 /** VerificationSummary plus the extra fields the researcher computes. */
@@ -359,6 +375,10 @@ export interface StoredSummary extends VerificationSummary {
   browserAgentSkipped?: boolean;
   evaluatorFailures?: number;
   phase?: RunPhase;
+  /** Task the summarized runs belong to. */
+  taskId?: string;
+  /** Promotion threshold used for meetsQualityRequirements (task.minPassRate; 1.0 = every run passes). */
+  minPassRate?: number;
 }
 
 export interface NewExperiment {
@@ -378,6 +398,8 @@ export interface NewExperiment {
   error?: string | null;
   notes?: string | null;
   createdAt?: string;
+  /** Default 'todo'. */
+  taskId?: string;
 }
 
 export interface ExperimentPatch {
@@ -429,6 +451,7 @@ export interface RunRow {
   usedMockProvider: boolean;
   /** Quality pass: coding completed AND evaluation passed (no evaluator failure). null while running. */
   passed: boolean | null;
+  taskId: string;
 }
 
 export interface EvaluationRow {
@@ -504,6 +527,8 @@ export interface BestEntry {
   promotedAt: string;
   previousConfigId: string | null;
   previousMedianTokens: number | null;
+  /** Dev task this promotion is the best for. */
+  taskId: string;
 }
 
 /** Source of a subscription usage-limit hit that made the research loop wait. */
@@ -715,6 +740,7 @@ function mapExperiment(r: Raw): ExperimentRow {
     holdoutPassed: nb(r.holdout_passed),
     error: r.error ?? null,
     notes: r.notes ?? null,
+    taskId: r.task_id ?? DEFAULT_TASK,
   };
 }
 
@@ -749,6 +775,7 @@ function mapRun(r: Raw): RunRow {
     durationMs: r.duration_ms,
     usedMockProvider: Boolean(r.used_mock_provider),
     passed: nb(r.passed),
+    taskId: r.task_id ?? DEFAULT_TASK,
   };
 }
 
@@ -805,6 +832,7 @@ function mapBest(r: Raw): BestEntry {
     promotedAt: r.promoted_at,
     previousConfigId: r.previous_config_id ?? null,
     previousMedianTokens: r.previous_median_tokens ?? null,
+    taskId: r.task_id ?? DEFAULT_TASK,
   };
 }
 
@@ -823,6 +851,8 @@ export class Db {
   readonly raw: Database.Database;
   readonly path: string;
   private readonly jsonl: string | null;
+  /** Schema >= v5 (task_id columns). Read-only viewers may open an older DB: then every row is todo. */
+  private hasTaskCols = false;
 
   constructor(path: string = DEFAULT_DB_PATH, opts: OpenDbOptions = {}) {
     this.path = path;
@@ -834,6 +864,7 @@ export class Db {
       this.jsonl = null;
       const v = this.raw.pragma('user_version', { simple: true }) as number;
       if (v > MIGRATIONS.length) throw new Error(`DB schema version ${v} is newer than this code (${MIGRATIONS.length})`);
+      this.hasTaskCols = v >= TASK_SCHEMA_VERSION;
       return;
     }
     if (!inMemory) mkdirSync(dirname(path), { recursive: true });
@@ -844,6 +875,14 @@ export class Db {
     this.jsonl =
       opts.experimentsJsonl === undefined ? (inMemory ? null : join(dirname(path), 'experiments.jsonl')) : opts.experimentsJsonl;
     this.migrate();
+    this.hasTaskCols = this.schemaVersion() >= TASK_SCHEMA_VERSION;
+  }
+
+  /** SQL condition + values restricting `col` (a task_id column) to taskId; old schemas only hold todo rows. */
+  private taskCond(taskId: string | undefined, col = 'task_id'): { sql: string | null; vals: unknown[]; none: boolean } {
+    if (!taskId) return { sql: null, vals: [], none: false };
+    if (!this.hasTaskCols) return { sql: null, vals: [], none: taskId !== DEFAULT_TASK };
+    return { sql: `${col} = ?`, vals: [taskId], none: false };
   }
 
   private migrate(): void {
@@ -995,8 +1034,8 @@ export class Db {
     this.raw
       .prepare(
         `INSERT INTO experiments (id, session_id, kind, parent_config_id, candidate_config_id, hypothesis, change_summary, changes,
-           provider, model, created_at, status, outcome, is_mock, error, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           provider, model, created_at, status, outcome, is_mock, error, notes, task_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -1015,6 +1054,7 @@ export class Db {
         e.isMock ? 1 : 0,
         e.error ?? null,
         e.notes ?? null,
+        e.taskId ?? DEFAULT_TASK,
       );
     const row = this.getExperiment(id)!;
     this.appendExperimentEvent('created', row);
@@ -1061,9 +1101,15 @@ export class Db {
     return r ? mapExperiment(r) : null;
   }
 
-  listExperiments(filter: { sessionId?: string; statuses?: ExperimentStatus[] } = {}): ExperimentRow[] {
+  listExperiments(filter: { sessionId?: string; statuses?: ExperimentStatus[]; taskId?: string } = {}): ExperimentRow[] {
     const where: string[] = [];
     const vals: unknown[] = [];
+    const t = this.taskCond(filter.taskId);
+    if (t.none) return [];
+    if (t.sql) {
+      where.push(t.sql);
+      vals.push(...t.vals);
+    }
     if (filter.sessionId) {
       where.push('session_id = ?');
       vals.push(filter.sessionId);
@@ -1090,11 +1136,13 @@ export class Db {
     model?: string | null;
     startedAt?: string;
     usedMockProvider?: boolean;
+    /** Default 'todo'. */
+    taskId?: string;
   }): RunRow {
     this.raw
       .prepare(
-        `INSERT INTO runs (run_id, experiment_id, config_id, config_hash, seed, phase, suite, provider, model, started_at, status, used_mock_provider)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)`,
+        `INSERT INTO runs (run_id, experiment_id, config_id, config_hash, seed, phase, suite, provider, model, started_at, status, used_mock_provider, task_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`,
       )
       .run(
         r.runId,
@@ -1108,6 +1156,7 @@ export class Db {
         r.model ?? null,
         r.startedAt ?? nowIso(),
         r.usedMockProvider ? 1 : 0,
+        r.taskId ?? DEFAULT_TASK,
       );
     return this.getRun(r.runId)!;
   }
@@ -1162,9 +1211,15 @@ export class Db {
     return r ? mapRun(r) : null;
   }
 
-  listRuns(filter: { experimentId?: string; configId?: string; phase?: RunPhase; limit?: number } = {}): RunRow[] {
+  listRuns(filter: { experimentId?: string; configId?: string; phase?: RunPhase; limit?: number; taskId?: string } = {}): RunRow[] {
     const where: string[] = [];
     const vals: unknown[] = [];
+    const t = this.taskCond(filter.taskId);
+    if (t.none) return [];
+    if (t.sql) {
+      where.push(t.sql);
+      vals.push(...t.vals);
+    }
     if (filter.experimentId) {
       where.push('experiment_id = ?');
       vals.push(filter.experimentId);
@@ -1361,7 +1416,11 @@ export class Db {
 
   // ---- best history --------------------------------------------------------
 
-  recordPromotion(p: { experimentId: string; configId: string; summary: StoredSummary; promotedAt?: string }): BestEntry {
+  /**
+   * Record a new best for the experiment's dev task (bests are independent per task). taskId defaults to
+   * the experiment's task (else todo).
+   */
+  recordPromotion(p: { experimentId: string; configId: string; summary: StoredSummary; promotedAt?: string; taskId?: string }): BestEntry {
     if (p.summary.usedMockProvider) throw new Error('refusing to promote a mock-provider result');
     if (!p.summary.meetsQualityRequirements) throw new Error('refusing to promote a config that does not meet quality requirements');
     if (p.summary.browserAgentSkipped) throw new Error('refusing to promote a config evaluated without the browser agent ([NO-BROWSER-AGENT])');
@@ -1375,23 +1434,26 @@ export class Db {
     if (skipped.n > 0) throw new Error(`refusing to promote: ${skipped.n} evaluation(s) of ${p.experimentId} skipped the browser agent ([NO-BROWSER-AGENT])`);
     const cheat = this.cheatingStatus(p.configId);
     if (cheat) throw new Error(`refusing to promote ${p.configId}: flagged as cheating${cheat.inherited ? ` (inherited from ${cheat.flaggedConfigId})` : ''}: ${cheat.reason}`);
-    const prev = this.getBestVerified();
+    const taskId = p.taskId ?? this.getExperiment(p.experimentId)?.taskId ?? DEFAULT_TASK;
+    const prev = this.getBestVerified(taskId);
     const at = p.promotedAt ?? nowIso();
     this.raw.transaction(() => {
       this.raw
         .prepare(
-          `INSERT INTO best_history (experiment_id, config_id, median_tokens, pass_rate, summary_json, promoted_at, previous_config_id, previous_median_tokens)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO best_history (experiment_id, config_id, median_tokens, pass_rate, summary_json, promoted_at, previous_config_id, previous_median_tokens, task_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(p.experimentId, p.configId, p.summary.medianTokens, p.summary.passRate, JSON.stringify(p.summary), at, prev?.configId ?? null, prev?.medianTokens ?? null);
+        .run(p.experimentId, p.configId, p.summary.medianTokens, p.summary.passRate, JSON.stringify(p.summary), at, prev?.configId ?? null, prev?.medianTokens ?? null, taskId);
       this.markConfigPromoted(p.configId, at);
     })();
-    return this.getBestVerified()!;
+    return this.getBestVerified(taskId)!;
   }
 
-  /** Newest promotion whose config is not flagged as cheating (directly or via an ancestor). */
-  getBestVerified(): BestEntry | null {
-    const rows = this.raw.prepare(`SELECT * FROM best_history ORDER BY seq DESC`).all() as Raw[];
+  /** Newest promotion for this dev task (default todo) whose config is not flagged as cheating (directly or via an ancestor). */
+  getBestVerified(taskId: string = DEFAULT_TASK): BestEntry | null {
+    const t = this.taskCond(taskId);
+    if (t.none) return null;
+    const rows = this.raw.prepare(`SELECT * FROM best_history ${t.sql ? `WHERE ${t.sql}` : ''} ORDER BY seq DESC`).all(...t.vals) as Raw[];
     if (!rows.length) return null;
     const flagged = this.hasFlagsTable() && (this.raw.prepare(`SELECT COUNT(*) n FROM flags`).get() as Raw).n > 0;
     for (const r of rows) if (!flagged || !this.cheatingStatus(r.config_id)) return mapBest(r);
@@ -1493,11 +1555,13 @@ export class Db {
   }
 
   /** Every promotion in order (the "best verified token usage over experiments" series). */
-  getBestHistory(): (BestEntry & { experimentSeq: number | null; flaggedCheating: boolean })[] {
+  getBestHistory(taskId?: string): (BestEntry & { experimentSeq: number | null; flaggedCheating: boolean })[] {
+    const t = this.taskCond(taskId, 'b.task_id');
+    if (t.none) return [];
     return (
       this.raw
-        .prepare(`SELECT b.*, e.seq AS experiment_seq FROM best_history b LEFT JOIN experiments e ON e.id = b.experiment_id ORDER BY b.seq`)
-        .all() as Raw[]
+        .prepare(`SELECT b.*, e.seq AS experiment_seq FROM best_history b LEFT JOIN experiments e ON e.id = b.experiment_id ${t.sql ? `WHERE ${t.sql}` : ''} ORDER BY b.seq`)
+        .all(...t.vals) as Raw[]
     ).map((r) => ({ ...mapBest(r), experimentSeq: r.experiment_seq ?? null, flaggedCheating: !!this.cheatingStatus(r.config_id) }));
   }
 
@@ -1665,15 +1729,28 @@ export class Db {
   }
 
   /** Experiment history table with per-experiment aggregates. */
-  listExperimentsWithAggregates(filter: { sessionId?: string } = {}): ExperimentListItem[] {
-    const best = this.getBestVerified();
-    return this.listExperiments(filter).map((e) => this.aggregateExperiment(e, best?.medianTokens ?? null));
+  /** Experiment history table with per-experiment aggregates (improvement is vs the best of each experiment's own task). */
+  listExperimentsWithAggregates(filter: { sessionId?: string; taskId?: string } = {}): ExperimentListItem[] {
+    const bestByTask = new Map<string, number | null>();
+    const bestOf = (taskId: string) => {
+      if (!bestByTask.has(taskId)) bestByTask.set(taskId, this.getBestVerified(taskId)?.medianTokens ?? null);
+      return bestByTask.get(taskId)!;
+    };
+    return this.listExperiments(filter).map((e) => this.aggregateExperiment(e, bestOf(e.taskId)));
+  }
+
+  /** Task ids present in the DB (experiments and runs), todo first. */
+  listTaskIds(): string[] {
+    if (!this.hasTaskCols) return [DEFAULT_TASK];
+    const rows = this.raw.prepare(`SELECT task_id t FROM experiments UNION SELECT task_id t FROM runs`).all() as Raw[];
+    const ids = new Set<string>([DEFAULT_TASK, ...rows.map((r) => String(r.t))]);
+    return [...ids].sort((a, b) => (a === DEFAULT_TASK ? -1 : b === DEFAULT_TASK ? 1 : a.localeCompare(b)));
   }
 
   getExperimentDetail(id: string): ExperimentDetail | null {
     const e = this.getExperiment(id);
     if (!e) return null;
-    const best = this.getBestVerified();
+    const best = this.getBestVerified(e.taskId);
     const runs = this.listRuns({ experimentId: id }).map((r) => ({ ...r, evaluations: this.listEvaluations(r.runId) }));
     return {
       experiment: this.aggregateExperiment(e, best?.medianTokens ?? null),
@@ -1685,11 +1762,21 @@ export class Db {
     };
   }
 
-  getOverview(): Overview {
-    const best = this.getBestVerified();
-    const baseRow = this.raw
-      .prepare(`SELECT * FROM experiments WHERE kind = 'baseline' AND status = 'completed' ORDER BY seq DESC LIMIT 1`)
-      .get() as Raw | undefined;
+  /**
+   * Dashboard overview. best/baseline are those of `taskId` (default todo). Counts, costs and tokens cover
+   * every task unless `taskId` is given.
+   */
+  getOverview(taskId?: string): Overview {
+    const task = taskId ?? DEFAULT_TASK;
+    const best = this.getBestVerified(task);
+    const bt = this.taskCond(task);
+    const baseRow = bt.none
+      ? undefined
+      : (this.raw
+          .prepare(`SELECT * FROM experiments WHERE kind = 'baseline' AND status = 'completed' ${bt.sql ? `AND ${bt.sql}` : ''} ORDER BY seq DESC LIMIT 1`)
+          .get(...bt.vals) as Raw | undefined);
+    const ft = this.taskCond(taskId);
+    const fw = ft.none ? 'WHERE 0' : ft.sql ? `WHERE ${ft.sql}` : '';
     const baseExp = baseRow ? mapExperiment(baseRow) : null;
     const baseline = baseExp
       ? {
@@ -1701,18 +1788,18 @@ export class Db {
         }
       : null;
     const byOutcome: Record<string, number> = {};
-    for (const r of this.raw.prepare(`SELECT COALESCE(outcome, status) k, COUNT(*) n FROM experiments GROUP BY k`).all() as Raw[]) {
+    for (const r of this.raw.prepare(`SELECT COALESCE(outcome, status) k, COUNT(*) n FROM experiments ${fw} GROUP BY k`).all(...ft.vals) as Raw[]) {
       byOutcome[r.k] = r.n;
     }
     const counts = this.raw
       .prepare(
         `SELECT COUNT(*) total, SUM(CASE WHEN status IN ('completed','rejected','failed','interrupted') THEN 1 ELSE 0 END) fin,
-           SUM(is_mock) mock FROM experiments`,
+           SUM(is_mock) mock FROM experiments ${fw}`,
       )
-      .get() as Raw;
+      .get(...ft.vals) as Raw;
     const runCounts = this.raw
-      .prepare(`SELECT COUNT(*) total, SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END) passed, SUM(used_mock_provider) mock FROM runs`)
-      .get() as Raw;
+      .prepare(`SELECT COUNT(*) total, SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END) passed, SUM(used_mock_provider) mock FROM runs ${fw}`)
+      .get(...ft.vals) as Raw;
     const roles = this.costAndTokensByRole();
     const latest = this.latestSession();
     // Column exists from schema v2; read-only viewers may open an older DB.
@@ -1769,7 +1856,7 @@ export class Db {
   }
 
   /** One point per finished run with a dev evaluation: tokens vs visual score / pass. */
-  getTokensVsQuality(): {
+  getTokensVsQuality(taskId?: string): {
     runId: string;
     experimentId: string | null;
     configId: string;
@@ -1778,15 +1865,18 @@ export class Db {
     visualScore: number | null;
     passed: boolean;
     usedMockProvider: boolean;
+    taskId: string;
   }[] {
+    const tq = this.taskCond(taskId, 'r.task_id');
+    if (tq.none) return [];
     return (
       this.raw
         .prepare(
-          `SELECT r.run_id, r.experiment_id, r.config_id, r.phase, r.total_tokens, r.passed, r.used_mock_provider, v.visual_score
+          `SELECT r.*, v.visual_score
            FROM runs r LEFT JOIN evaluations v ON v.run_id = r.run_id AND v.suite = r.suite
-           WHERE r.status <> 'running' AND r.suite = 'dev' AND IFNULL(r.failure_reason, '') NOT LIKE '${USAGE_LIMIT_REASON}%' ORDER BY r.started_at`,
+           WHERE r.status <> 'running' AND r.suite = 'dev' AND IFNULL(r.failure_reason, '') NOT LIKE '${USAGE_LIMIT_REASON}%' ${tq.sql ? `AND ${tq.sql}` : ''} ORDER BY r.started_at`,
         )
-        .all() as Raw[]
+        .all(...tq.vals) as Raw[]
     ).map((r) => ({
       runId: r.run_id,
       experimentId: r.experiment_id ?? null,
@@ -1796,14 +1886,19 @@ export class Db {
       visualScore: r.visual_score ?? null,
       passed: Boolean(r.passed),
       usedMockProvider: Boolean(r.used_mock_provider),
+      taskId: r.task_id ?? DEFAULT_TASK,
     }));
   }
 
   /** Pass rate per configuration over finished dev runs. */
-  getPassRateByConfig(): { configId: string; runs: number; passes: number; passRate: number; medianTokens: number | null; anyMock: boolean }[] {
+  getPassRateByConfig(taskId?: string): { configId: string; runs: number; passes: number; passRate: number; medianTokens: number | null; anyMock: boolean }[] {
+    const tq = this.taskCond(taskId);
+    if (tq.none) return [];
     const rows = this.raw
-      .prepare(`SELECT config_id, total_tokens, passed, used_mock_provider FROM runs WHERE status <> 'running' AND suite = 'dev' AND IFNULL(failure_reason, '') NOT LIKE '${USAGE_LIMIT_REASON}%' ORDER BY config_id`)
-      .all() as Raw[];
+      .prepare(
+        `SELECT config_id, total_tokens, passed, used_mock_provider FROM runs WHERE status <> 'running' AND suite = 'dev' AND IFNULL(failure_reason, '') NOT LIKE '${USAGE_LIMIT_REASON}%' ${tq.sql ? `AND ${tq.sql}` : ''} ORDER BY config_id`,
+      )
+      .all(...tq.vals) as Raw[];
     const by = new Map<string, { tokens: number[]; passes: number; mock: boolean }>();
     for (const r of rows) {
       const g = by.get(r.config_id) ?? { tokens: [], passes: 0, mock: false };

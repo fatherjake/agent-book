@@ -3,6 +3,10 @@
  * app snapshot, and persist runs / evaluations / usage records / artifacts. One failing run never
  * stops the batch. Every run has its own containers, network, gateway and ports, so runs are
  * independent; results are returned in index order regardless of completion order.
+ *
+ * Multi-task: `taskId` (default 'todo') selects the benchmark task: the coding run gets the task, the
+ * evaluation dispatches to the task's evaluator (git-diff tasks are evaluated from workspace.patch), and
+ * every run row carries task_id.
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -24,6 +28,8 @@ export interface ExperimentDeps {
     provider?: ModelProvider;
     signal?: AbortSignal;
     limitsOverride?: Partial<RunLimits>;
+    /** Benchmark task id (absent = todo, so existing fakes keep working). */
+    task?: string;
   }): Promise<CodingRunResult>;
   evaluateRun(opts: {
     runId: string;
@@ -33,12 +39,19 @@ export interface ExperimentDeps {
     provider?: ModelProvider;
     skipBrowserAgent?: boolean;
     outDir?: string;
+    /** Absent = todo. */
+    taskId?: string;
+    /** git-diff tasks: the run's workspace.patch. */
+    patchFile?: string;
+    experimentId?: string;
   }): Promise<EvaluationResult>;
 }
 
 export interface RunBenchmarkOptions {
   configId: string;
   runs: number;
+  /** Benchmark task (docs/TASKS.md). Default 'todo'. */
+  taskId?: string;
   suite?: Suite;
   phase?: RunPhase;
   experimentId?: string;
@@ -220,6 +233,15 @@ function hasApp(appDir: string): boolean {
   return existsSync(d) && statSync(d).isDirectory() && readdirSync(d).length > 0;
 }
 
+/** The run's snapshot to evaluate: workspace.patch for git-diff tasks (may be empty = no change), else the app dir. */
+function snapshotOf(c: CodingRunResult): { kind: 'patch' | 'app'; path: string } | null {
+  if (c.artifacts.workspacePatch) {
+    const p = abs(c.artifacts.workspacePatch);
+    return existsSync(p) && statSync(p).isFile() ? { kind: 'patch', path: p } : null;
+  }
+  return hasApp(c.artifacts.appSnapshotDir) ? { kind: 'app', path: abs(c.artifacts.appSnapshotDir) } : null;
+}
+
 /** Runner paths are relative to the repo root; resolve them independent of cwd. */
 const abs = (p: string) => (isAbsolute(p) ? p : resolve(REPO_ROOT, p));
 const rel = (p: string) => relative(REPO_ROOT, abs(p)) || '.';
@@ -240,6 +262,7 @@ function registerArtifacts(db: Db, r: BenchmarkRunResult, experimentId: string |
   add('usage', c.artifacts.usageFile);
   add('config-snapshot', c.artifacts.configSnapshotDir);
   add('app-snapshot', c.artifacts.appSnapshotDir);
+  add('workspace-patch', c.artifacts.workspacePatch);
   if (runDir) add('run-json', join(runDir, 'run.json'));
   if (r.evaluation) {
     const reportFile = r.evaluation.reportFile;
@@ -263,6 +286,8 @@ export async function runBenchmark(opts: RunBenchmarkOptions): Promise<Benchmark
   const suite: Suite = opts.suite ?? 'dev';
   const phase: RunPhase = opts.phase ?? (suite === 'holdout' ? 'holdout' : 'manual');
   const db = opts.db;
+  const taskId = opts.taskId ?? 'todo';
+  const todo = taskId === 'todo';
 
   const config = deps.loadConfig(opts.configId);
   // Budget cap passed as a runner override (can only tighten); the config itself and its hash are untouched.
@@ -275,7 +300,8 @@ export async function runBenchmark(opts: RunBenchmarkOptions): Promise<Benchmark
 
   /** One coding run + evaluation + persistence for index i. Never throws. */
   const runOne = async (i: number): Promise<{ result: BenchmarkRunResult; limitHit: ReturnType<typeof usageLimitOf>; runId: string }> => {
-    const seed = opts.seeds?.[i] ?? deterministicSeed(`${opts.experimentId ?? opts.configId}:${phase}:${suite}:${i}`);
+    // todo keeps its original seed keys (same seeds as before the multi-task upgrade).
+    const seed = opts.seeds?.[i] ?? deterministicSeed(`${opts.experimentId ?? opts.configId}:${phase}:${suite}:${i}${todo ? '' : `:${taskId}`}`);
     const runId = newRunId();
     const runProvider = opts.providerFactory ? opts.providerFactory() : opts.provider;
     const usedMock = runProvider?.isMock ?? config.provider === 'mock';
@@ -289,8 +315,9 @@ export async function runBenchmark(opts: RunBenchmarkOptions): Promise<Benchmark
       provider: runProvider?.name ?? config.provider,
       model: config.model,
       usedMockProvider: usedMock,
+      taskId,
     });
-    log.info('run start', { runId, configId: opts.configId, phase, suite, seed, index: i + 1, of: opts.runs });
+    log.info('run start', { runId, configId: opts.configId, taskId, phase, suite, seed, index: i + 1, of: opts.runs });
 
     let result: BenchmarkRunResult;
     let evalOutDir: string | null = null;
@@ -303,11 +330,13 @@ export async function runBenchmark(opts: RunBenchmarkOptions): Promise<Benchmark
         provider: runProvider,
         signal: opts.signal,
         limitsOverride,
+        ...(todo ? {} : { task: taskId }),
       });
       let evaluation: EvaluationResult | null = null;
       let error: string | undefined;
-      if (coding.status === 'completed' && hasApp(coding.artifacts.appSnapshotDir)) {
-        evalOutDir = join(dirname(abs(coding.artifacts.appSnapshotDir)), 'eval', suite);
+      const snap = coding.status === 'completed' ? snapshotOf(coding) : null;
+      if (snap) {
+        evalOutDir = join(dirname(snap.path), 'eval', suite);
         try {
           evaluation = await deps.evaluateRun({
             runId: coding.runId,
@@ -317,6 +346,8 @@ export async function runBenchmark(opts: RunBenchmarkOptions): Promise<Benchmark
             provider: opts.evaluatorProvider,
             skipBrowserAgent: opts.skipBrowserAgent,
             outDir: evalOutDir,
+            ...(todo ? {} : { taskId, experimentId: opts.experimentId }),
+            ...(snap.kind === 'patch' ? { patchFile: snap.path } : {}),
           });
         } catch (e) {
           error = `evaluator crashed: ${(e as Error).message ?? String(e)}`;
@@ -352,6 +383,7 @@ export async function runBenchmark(opts: RunBenchmarkOptions): Promise<Benchmark
           configHash: '',
           usage: totalsFromRecords(recs.filter((r) => r.role === 'coding')),
           toolCalls: 0,
+          taskId,
           artifacts: {
             appSnapshotDir: join(runDir, 'app'),
             traceFile: join(runDir, 'trace.jsonl'),
@@ -486,6 +518,13 @@ export async function runBenchmark(opts: RunBenchmarkOptions): Promise<Benchmark
   return slots.filter((r): r is BenchmarkRunResult => r !== undefined);
 }
 
+/** passes/runs >= minPassRate (default 1.0 = every run). Exact for 1.0 (no floating point). */
+export function meetsPassRate(passes: number, runs: number, minPassRate = 1): boolean {
+  if (runs <= 0) return false;
+  if (minPassRate >= 1) return passes === runs;
+  return passes >= Math.ceil(minPassRate * runs - 1e-9);
+}
+
 function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal?.aborted) return resolve();
@@ -500,10 +539,11 @@ function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * Aggregate a batch. meetsQualityRequirements only if every run passed, none used the mock provider
- * and none was evaluated without the LLM browser agent (skipBrowserAgent → incomplete evaluation).
+ * Aggregate a batch. meetsQualityRequirements only if the pass rate reaches `minPassRate` (default 1.0 =
+ * every run passed; a task's minPassRate otherwise), none used the mock provider and none was evaluated
+ * without the LLM browser agent (skipBrowserAgent → incomplete evaluation).
  */
-export function summarize(results: BenchmarkRunResult[], configId?: string): StoredSummary {
+export function summarize(results: BenchmarkRunResult[], configId?: string, opts: { minPassRate?: number; taskId?: string } = {}): StoredSummary {
   const tokens = results.map((r) => r.coding.usage.totalTokens);
   const passes = results.filter((r) => r.passed).length;
   const visuals = results.map((r) => r.evaluation?.visualScore).filter((v): v is number => typeof v === 'number');
@@ -520,9 +560,11 @@ export function summarize(results: BenchmarkRunResult[], configId?: string): Sto
     medianVisualScore: median(visuals) ?? 0,
     totalCostUsd: results.reduce((a, r) => a + r.coding.usage.costUsd + (r.evaluation?.evaluatorUsage?.costUsd ?? 0), 0),
     medianDurationMs: median(results.map((r) => r.coding.durationMs)) ?? 0,
-    meetsQualityRequirements: results.length > 0 && passes === results.length && !usedMock && !browserAgentSkipped,
+    meetsQualityRequirements: results.length > 0 && meetsPassRate(passes, results.length, opts.minPassRate) && !usedMock && !browserAgentSkipped,
     usedMockProvider: usedMock,
     browserAgentSkipped,
     evaluatorFailures: results.filter((r) => r.evaluation?.evaluatorFailure).length,
+    ...(opts.taskId ? { taskId: opts.taskId } : {}),
+    ...(opts.minPassRate !== undefined && opts.minPassRate < 1 ? { minPassRate: opts.minPassRate } : {}),
   };
 }

@@ -105,6 +105,44 @@ gateway on host 127.0.0.1:<port> (runner/gateway.ts) ── Bearer <real token> 
 * Forwarder containers and networks carry `frugal.role=coding` and `frugal.runId`.
   `cleanupAbandonedContainers()` also removes matching coding networks.
 
+## Multi-task benchmark (binding contract: docs/TASKS.md)
+
+* **Registry:** `runner/tasks.ts` loads `benchmark/tasks/<id>/task.json` (`TaskDefinition`). `getTask(id)` loads and
+  validates only that task; `listTasks()` loads all; `allBannedTerms()` / `allReferenceDiffPaths()` read the raw
+  files of every task. `todo`'s task.json uses `builtin:todo` for prompt, image builder and evaluator: todo keeps
+  the original code paths (benchmark/docker, runner/claude-code-image.ts, evaluator/index.ts, the original seeds).
+* **Coding runs:** `runCodingAgent({ task })` (default todo). The task gives the image (`ensureTaskImage(task)` →
+  `{ image, imageId, starterHash, baseImage }`), the prompt (`buildTaskPrompt(prompt.md, config, inline spec)`),
+  `/spec`, `--cpus/--memory/--pids-limit`, extra anonymous volumes and tmpfs, and `limits` (task fields replace
+  the config's, overrides only tighten). Non-todo tasks: `createSandbox({ startHook: '/opt/frugal/task/services
+  start' })`, the gateway forwarder uses the todo benchmark image (trusted `node -e` as user `node`), and
+  `/opt/frugal/{bin,libexec,docs}` are separate tmpfs mounts (`optLayout 'split'`) so the image's
+  `/opt/frugal/task` stays visible. `taskId` is in run.json and every usage record.
+* **Snapshots (`runner/snapshot.ts`):** `tree` → `results/runs/<id>/app/`. `git-diff` → `recordCheckpoint()` at start,
+  `snapshotGitDiff()` after the run → `results/runs/<id>/workspace.patch` (`CodingRunResult.artifacts.workspacePatch`;
+  excludes `log tmp node_modules vendor public/packs*`; staged in the container's /tmp and copied out uncapped).
+* **Evaluation:** `evaluateRun({ taskId, patchFile, … })`: todo → the original evaluator; other tasks → the task
+  module's `evaluateTask({ runId, patchFile, suite, seed, outDir, image /* baseImage */, taskId, experimentId? })`.
+  Thrown errors become an evaluator-failure result. `browserAgentSkipped` is forced false for `browserAgent: 'none'`.
+* **runBenchmark({ taskId })** passes `task` to the runner, evaluates `workspace.patch` (an empty patch is evaluated:
+  "no change" fails the feature checks), stores `runs.task_id`. Seeds of non-todo tasks add `:<taskId>` to the key.
+* **Storage v5:** `task_id TEXT NOT NULL DEFAULT 'todo'` on `runs`, `experiments`, `best_history`.
+  `getBestVerified(taskId = 'todo')`, `recordPromotion({ taskId? /* default: the experiment's */ })`,
+  `listRuns/listExperiments/listExperimentsWithAggregates({ taskId })`, `getOverview(taskId?)`,
+  `getBestHistory(taskId?)`, `listTaskIds()`. Read-only viewers of an older DB treat every row as todo.
+* **Research loop:** `settings.devTask` / `settings.holdoutTask` (default todo; holdoutTask defaults to devTask).
+  Quick/verify/baseline runs use devTask; best, baseline bootstrap and promotion are per dev task (published to
+  `results/best-config` for todo, `results/best-config-<task>` otherwise). Promotion needs
+  `meetsPassRate(passes, runs, devTask.minPassRate)` and a lower median; the quick run must pass. Holdout on
+  promotion: holdoutTask with suite and phase `holdout` (same task = the old behaviour), stored as one bit.
+* **Research workspace:** only devTask experiments/runs (and the digest likewise), spec/ + prompt.md of the dev task,
+  hidden tasks' id/title/paths as forbidden markers. Brownfield dev tasks: the research container runs the task image
+  and gets `/research/codebase` (root-owned tmpfs, filled with `DockerSandbox.copyWithin('/workspace', …)` reading as
+  node and writing as root; no .git/node_modules/vendor/tmp/log/public/packs*).
+* **Config surface:** `docs/<path>` (≤ 32 KB each, ≤ 256 KB / 64 files) → `/opt/frugal/docs` read-only, not loaded
+  into context. **Guard:** banned terms (union of every non-todo task's `bannedTerms`) and the added lines of every
+  task's `referenceDiffs` and of every run's `workspace.patch` in the similarity corpus.
+
 ## Benchmark app contract (also stated in `benchmark/spec/requirements.md`)
 
 * Working dir `/workspace`. `npm run build` builds the frontend. `npm start` starts ONE Node
@@ -186,9 +224,13 @@ createSandbox(opts: { image: string; runId: string; role: 'coding' | 'eval'; ...
 ensureImage(): Promise<{ image: string; imageId: string; starterHash: string }>
 cleanupAbandonedContainers(): Promise<number>
 
+// runner/tasks.ts
+getTask(id = 'todo'): Task;  listTasks(): Task[];  ensureTaskImage(task, { backend? }): Promise<TaskImageInfo>
+allBannedTerms(): string[];  allReferenceDiffPaths(): string[];  taskLimits(base, task): RunLimits
+
 // runner/run.ts
 runCodingAgent(opts: { config: AgentConfig; runId?: string; experimentId?: string; seed: number;
-  provider?: ModelProvider; signal?: AbortSignal }): Promise<CodingRunResult>
+  provider?: ModelProvider; signal?: AbortSignal; task?: string | Task }): Promise<CodingRunResult>
   // config.backend 'claude-code' → Claude Code in the container (a mock provider falls back to the api loop)
 
 // runner/gateway.ts  — the only holder of the subscription token
@@ -207,7 +249,7 @@ ensureClaudeCodeImage(): Promise<{ image; imageId; starterHash; baseImage }>
 
 // evaluator/index.ts
 evaluateRun(opts: { runId: string; appDir: string; suite: 'dev' | 'holdout'; seed: number;
-  provider?: ModelProvider; skipBrowserAgent?: boolean; outDir?: string }): Promise<EvaluationResult>
+  provider?: ModelProvider; skipBrowserAgent?: boolean; outDir?: string; taskId?: string; patchFile?: string }): Promise<EvaluationResult>
 // evaluator/score.ts  — the ONLY place pass/fail is decided
 scoreEvaluation(checks: CheckResult[], visualScore: number, threshold: number): { passed: boolean; summary: string }
 
@@ -215,7 +257,7 @@ scoreEvaluation(checks: CheckResult[], visualScore: number, threshold: number): 
 openDb(path?: string /* default results/benchmark.db */): Db  // insert/update/query helpers
 
 // researcher/experiment.ts
-runBenchmark(opts: { configId: string; runs: number; suite?: 'dev' | 'holdout'; experimentId?: string; ... }):
+runBenchmark(opts: { configId: string; runs: number; taskId?: string; suite?: 'dev' | 'holdout'; experimentId?: string; ... }):
   Promise<{ coding: CodingRunResult; evaluation: EvaluationResult | null }[]>
 ```
 
@@ -232,11 +274,13 @@ results/
     usage.jsonl                raw UsageRecords (coding role)
     claude-stream.jsonl        raw Claude Code stream-json (claude-code backend)
     config/                    config snapshot
-    app/                       generated app snapshot (no node_modules)
+    app/                       generated app snapshot (no node_modules; tree tasks)
+    workspace.patch            git-diff tasks: binary patch vs the checkpoint commit
     eval/<suite>/report.json   EvaluationResult
     eval/<suite>/screenshots/  …
     eval/<suite>/browser-trace.jsonl
-  best-config/                 copy of the current best verified config + summary.json
+  best-config/                 copy of the current best verified todo config + summary.json
+  best-config-<taskId>/        same for another dev task
 ```
 
 ## Integrity rules

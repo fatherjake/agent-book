@@ -164,25 +164,32 @@ export function createDashboardData(opts: DataOptions): DashboardData {
   }
 
   interface RowCtx {
-    realBest: number | null;
+    /** Real best median of a task (bests are per task). */
+    realBest: (taskId: string) => number | null;
     mockBest: number | null;
     stats: Map<string, { runs: number; passes: number; wallMs: number[] }>;
   }
 
   function rowCtx(list: ExperimentListItem[]): RowCtx {
     const mb = mockBestOf(list);
-    return { realBest: db.getBestVerified()?.medianTokens ?? null, mockBest: mb ? tokensOf(mb) : null, stats: runStats() };
+    const bests = new Map<string, number | null>();
+    const realBest = (taskId: string) => {
+      if (!bests.has(taskId)) bests.set(taskId, db.getBestVerified(taskId)?.medianTokens ?? null);
+      return bests.get(taskId)!;
+    };
+    return { realBest, mockBest: mb ? tokensOf(mb) : null, stats: runStats() };
   }
 
   function toRow(e: ExperimentListItem, ctx: RowCtx): ExperimentRow {
     const tokens = tokensOf(e);
     // Real rows compare to the real best; mock rows fall back to the mock best when no real best exists.
-    const ref = ctx.realBest ?? (e.anyMock ? ctx.mockBest : null);
+    const ref = ctx.realBest(e.taskId) ?? (e.anyMock ? ctx.mockBest : null);
     let improvement = tokens !== null && ref ? ((ref - tokens) / ref) * 100 : null;
     if (improvement !== null && Math.abs(improvement) < 1e-9) improvement = 0;
     const st = ctx.stats.get(e.id) ?? { runs: 0, passes: 0, wallMs: [] };
     return {
       id: e.id,
+      taskId: e.taskId,
       createdAt: e.createdAt,
       provider: e.provider,
       model: e.model,

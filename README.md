@@ -17,6 +17,11 @@ It repeats this loop unattended:
 Everything lands in SQLite (`results/benchmark.db`) plus on-disk artifacts, and is viewable with a
 CLI, Markdown reports and a read-only dashboard.
 
+The todo app is task `todo`, one of several **benchmark tasks** (see [Benchmark tasks](#benchmark-tasks)).
+Brownfield tasks ask the coding agent to implement a feature in a large existing codebase (Mastodon:
+`mastodon-bookmarks` for research, `mastodon-filters` as a hidden holdout). `todo` is the default
+everywhere and behaves exactly as before.
+
 > **Status in one line:** the pipeline is verified end to end. The first real run of the Claude Code
 > baseline (subscription, `--skip-browser-agent`) **passed 59/59 checks with visual score 100.0 using
 > 161,546 coding tokens** (2026-11-15). The api backend (`baseline-api`) has still never called a real
@@ -219,6 +224,25 @@ configs/<id>/
 | **PreToolUse `hookSpecificOutput.updatedInput`** (with `permissionDecision: "allow"`) | **Rewrites the command before it runs.** `{ <cmd>\n} 2>&1 \| clip 1200; exit ${PIPESTATUS[0]}` clipped both a succeeding and a failing (exit 3) command to about 1.5k chars and kept the exit code (Bash runs under bash). This is the way to trim noisy failing builds. The model still sees its original command in its tool_use. |
 | Stream events | `system` `hook_started` / `hook_response` with `hook_name` (`"PostToolUse:Bash"`), `exit_code`, `outcome`, `stdout`, `stderr`. |
 
+### Reference docs: `docs/` (claude-code only)
+
+```
+configs/<id>/docs/<path>   any text files, up to 3 directory levels (e.g. docs/areas/api.md)
+                           <= 32 KB each, <= 256 KB and 64 files in total
+```
+
+* Installed root-owned and read-only (`0444` files, `0555` dirs) at **`/opt/frugal/docs/<path>`** in the coding
+  container. They are **not** loaded into context: they cost nothing until the agent reads a file, so the config
+  must say where to look (CLAUDE.md, the system prompt or a skill). Typical use: a codebase map or a feature-area
+  guide for a brownfield task.
+* Loaded by `loadConfig` (`config.docs`), hashed only when present (configs without `docs/` keep their hashes),
+  written by `snapshotConfig`, and proposable by the research agent as `docs/<path>` (string = content, null =
+  delete). The always-loaded files keep their limits: the 40 KB config total does not include `docs/`.
+* The anti-cheating guard applies to docs like to every other file (banned terms, heuristics, similarity).
+* Mounts: on todo the config's bin scripts and docs share one tmpfs at `/opt/frugal`. On other tasks, whose image
+  ships `/opt/frugal/task`, the runner mounts separate tmpfs at `/opt/frugal/bin`, `/opt/frugal/libexec` and
+  `/opt/frugal/docs` instead.
+
 ### Anti-cheating guard (`researcher/config-guard.ts`)
 
 TASK.md §9 says the researcher must not reuse application code generated during earlier runs; only configurations
@@ -260,6 +284,15 @@ by `guardConfig(dir | files, opts) → { ok, violations: {file, rule, detail}[],
   k-grams that also occur in `benchmark/starter` or `benchmark/spec` (quoting the spec is not reuse), and
   snapshots of runs made with the config's own hash (they post-date it). Corpus fingerprints are cached in
   `results/.cache/config-guard-fingerprints.json`, keyed by path, size and mtime.
+* **Banned terms (multi-task):** the union of `bannedTerms` of every non-todo task in `benchmark/tasks/*/task.json`
+  (dev **and** holdout tasks; read from the raw files, so a half-built task still counts). Any config file, or file
+  name, containing one is rejected (`banned-term`). Matching is case-insensitive and word-ish: word parts split at
+  spaces, `_`, `-` and camelCase may be joined by spaces, `_` or `-` (`CustomFilter` also matches `custom_filter`
+  and `custom filter`), and substrings count (`bookmark` matches `unbookmark`). Mastodon: `bookmark`;
+  `custom_filter`, `CustomFilter`, `keyword filter`, `phrase filter`, `filters_controller`.
+* **Reference corpus (multi-task):** the added lines of every task's hidden `referenceDiffs` (the upstream PR diffs,
+  `evaluator/tasks/<id>/…`) and of every brownfield run's `results/runs/*/workspace.patch` join the similarity
+  corpus (lockfiles and translations skipped; runs of the config's own hash excluded).
 * **Runtime audit:** after each claude-code run, `run.json.configAudit` records every bin-script run (from the
   wrapper log), per-script counts, hook counts from the stream, app source files created or modified by a bin
   script, and the config-to-snapshot similarity. A run where a bin script wrote app source, or whose snapshot
@@ -353,6 +386,7 @@ invocation is recorded as a `manual` experiment, so it shows up in `results` and
 | Flag | Meaning |
 |---|---|
 | `--config <id>` | `baseline` (default) or `experiments/NNN` |
+| `--task <id>` | Benchmark task (default `todo`), e.g. `mastodon-bookmarks`. See [Benchmark tasks](#benchmark-tasks) |
 | `--runs <n>` | Sequential runs (default 1) |
 | `--suite dev\|holdout` | Evaluation suite (default `dev`) |
 | `--provider mock\|anthropic` | Override the config's provider. `mock` makes no API calls; results are `[MOCK]` |
@@ -369,6 +403,8 @@ The unattended research loop. Settings come from `configs/research.json`; flags 
 
 | Flag | Meaning |
 |---|---|
+| `--dev-task <id>` | Task the research optimizes (`devTask`, default `todo`). Quick, verification and baseline runs use it; the best, the baseline and promotion are per dev task |
+| `--holdout-task <id>` | Task of the holdout check on promotion (`holdoutTask`; default: the dev task, i.e. its holdout suite). A different task is hidden from the research agent: it sees one pass/fail bit per promoted experiment |
 | `--max-experiments <n>` | Max candidate experiments this session |
 | `--max-total-tokens <n>` | Max tokens this session, all roles combined (coding + evaluator + research) |
 | `--max-coding-tokens <n>` | Max coding-agent tokens this session (all runs combined) |
@@ -416,7 +452,10 @@ The unattended research loop. Settings come from `configs/research.json`; flags 
 ### `npm run results -- [flags]`
 
 Terminal view: overview, experiment table, `--experiment exp-0003` detail (checks, diff, artifacts),
-`--runs` (per-run tokens in/out/cacheRead/cacheWrite), `--limit N`, `--json`, `--db`.
+`--runs` (per-run tokens in/out/cacheRead/cacheWrite), `--limit N`, `--json`, `--db`. `--task <id>` restricts
+everything to one task (overview best/baseline are per task; the default view shows todo's best and every
+experiment, with a task column once more than one task has data). Cheating flags apply to the config, so every
+task whose best changes is reported and republished.
 
 **Flag cheating (human review).** The automatic guard can't catch every trick, so a suspiciously cheap run can
 be marked by hand:
@@ -467,6 +506,48 @@ images from the reference app; refuses without `--force`), `npm run typecheck`, 
   when any stored evaluation of the experiment has `browser_agent_skipped = 1`.
 
 ---
+
+## Benchmark tasks
+
+```
+benchmark/tasks/<id>/task.json   public task definition (TaskDefinition in runner/tasks.ts)
+benchmark/tasks/<id>/prompt.md   task prompt for the coding agent
+benchmark/tasks/<id>/spec/       copied to /spec in the coding container
+benchmark/tasks/<id>/docker/     image build context
+evaluator/tasks/<id>/            HIDDEN: checks, seeds, upstream specs, reference.diff
+```
+
+`runner/tasks.ts` loads and validates the registry (`getTask(id)`, `listTasks()`, `ensureTaskImage(task)`). The
+contract is [docs/TASKS.md](docs/TASKS.md). Per task:
+
+* **todo** (`greenfield`, browser agent required, `minPassRate` 1.0): its `task.json` points at the original
+  `benchmark/spec` and uses `builtin:todo` for prompt, images and evaluator, so todo runs exactly the original
+  code paths (same image, prompt, evaluator, seeds and numbers).
+* **Brownfield tasks** (Mastodon): the task drives the coding image (`image.builder` → `ensureTaskImage()`), the
+  prompt (`prompt.md`, plus the config's `inlineSpecFiles` that exist in the task's spec), the spec dir, the
+  container resources (`sandbox.cpus/memory/pidsLimit`), extra anonymous volumes (`/data` for Postgres/Redis)
+  and tmpfs, and the limits. `task.limits` fields **replace** the config's limit for runs of that task (todo
+  configs' limits are tuned for todo); run overrides such as `--max-tokens-per-run` only tighten. Right after
+  `docker run` the runner executes `/opt/frugal/task/services start` (non-zero = `infra_error`).
+* **Snapshots:** `tree` (todo) copies `/workspace` without `node_modules` to `results/runs/<id>/app/`.
+  `git-diff` records the checkpoint commit (`git rev-parse HEAD`) at container start and after the run writes
+  `results/runs/<id>/workspace.patch` (`git add -A` + `git diff --cached --binary <checkpoint>`, excluding
+  `log/ tmp/ node_modules/ vendor/ public/packs*`). The evaluator applies the patch to a fresh container.
+* **Evaluation:** `evaluateRun({ taskId, patchFile, … })` dispatches to the task's `evaluateTask` (todo keeps the
+  original evaluator). A crashing task evaluator is an evaluator failure, never blamed on the run.
+  `browserAgent: 'none'` tasks are complete without the LLM browser agent and therefore promotable;
+  `'required'` tasks keep the `[NO-BROWSER-AGENT]` rule.
+* **Promotion:** the verification pass rate must reach the dev task's `minPassRate` (todo 1.0, i.e. every run)
+  **and** the median coding tokens must beat the dev task's best. The quick run must pass.
+* **Research on a task:** `npm run research -- --dev-task mastodon-bookmarks --holdout-task mastodon-filters`.
+  The best, the baseline bootstrap and promotion are per dev task (`results/best-config-<task>/` for non-todo
+  tasks). The research workspace and the digest contain only the dev task's experiments, runs and public spec.
+  For a brownfield dev task the research container runs the task image and gets a **read-only copy of the
+  checkpoint source at `/research/codebase`** (no `.git`, `node_modules`, `vendor`, `tmp`, `log`,
+  `public/packs*`), made inside the container from the image, so the researcher can write codebase guides
+  for `docs/`. Nothing of the holdout task (name, prompt, spec, runs, checks, transcripts) enters the workspace
+  or the digest; its id, title and paths are forbidden markers of the workspace scan.
+* **Storage:** schema v5 adds `task_id` (default `'todo'`) to `runs`, `experiments` and `best_history`.
 
 ## How scoring works
 
@@ -672,15 +753,17 @@ happened yet, so the "typical" token profiles are **assumptions**.
 
 ```
 results/
-  benchmark.db                 SQLite (schema v2; append-only via triggers)
+  benchmark.db                 SQLite (schema v5; append-only via triggers)
   experiments.jsonl            one line per experiment state change
   logs/<date>.jsonl            structured logs
   runs/<runId>/
     run.json  trace.jsonl  usage.jsonl  config/  app/
+    workspace.patch            (git-diff tasks, instead of app/) the agent's change vs the checkpoint
     claude-stream.jsonl        (claude-code backend) raw Claude Code stream-json
     eval/<suite>/report.json  screenshots/  browser-trace.jsonl  usage.jsonl  app.log
   research/usage.jsonl         research-agent usage records
-  best-config/                 current best config + summary.json
+  best-config/                 current best todo config + summary.json
+  best-config-<taskId>/        current best of another dev task
   reports/<timestamp>.{md,json}
   _infra-test/                 mock infrastructure-test results from the build (see Status)
 ```

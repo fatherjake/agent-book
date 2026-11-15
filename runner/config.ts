@@ -2,7 +2,8 @@
  * Agent configuration loading, validation, hashing and snapshotting.
  * On-disk layout: configs/<id>/{config.json, system-prompt.md, tools.json, skills/*.md}
  *   claude-code backend only (all optional): CLAUDE.md, bin/<name> (helper scripts, shebang required),
- *   agents/<name>.md (subagents), commands/<name>.md (slash commands).
+ *   agents/<name>.md (subagents), commands/<name>.md (slash commands), docs/<path> (reference files
+ *   installed read-only at /opt/frugal/docs, never loaded into context automatically).
  * loadConfig() also runs the anti-cheating guard (researcher/config-guard.ts) on every config except
  * 'baseline-api', so hand-made configs cannot bypass it.
  */
@@ -20,6 +21,7 @@ import {
   CLAUDE_CODE_PERMISSIONS_KEYS,
   CLAUDE_CODE_SETTINGS_DENYLIST,
   CLAUDE_CODE_VERSION,
+  DOC_PATH_RE,
   HOOK_COMMAND_RE,
 } from './claude-code.js';
 import { formatViolations, guardConfig } from '../researcher/config-guard.js';
@@ -227,6 +229,40 @@ export function validateHooks(where: string, hooks: unknown): string[] {
 export const MAX_BIN_SCRIPTS = 8;
 export const MAX_AGENTS = 8;
 export const MAX_COMMANDS = 8;
+/** docs/ at load time (the anti-cheating guard enforces the tighter 32 KB / 256 KB / 64 files). */
+export const MAX_DOCS = 64;
+export const MAX_DOC_BYTES = 64 * 1024;
+
+/** Every file under docs/ (recursively, sorted by path). Paths must match DOC_PATH_RE; text only. */
+export function readDocsDir(where: string, dir: string): { path: string; content: string }[] {
+  const root = join(dir, 'docs');
+  if (!existsSync(root)) return [];
+  if (!statSync(root).isDirectory()) throw new ConfigError(where, 'docs must be a directory');
+  const out: { path: string; content: string }[] = [];
+  const walk = (d: string, prefix: string) => {
+    for (const f of readdirSync(d).sort()) {
+      if (f.startsWith('.')) continue;
+      const p = join(d, f);
+      const rel = prefix ? `${prefix}/${f}` : f;
+      const st = statSync(p);
+      if (st.isDirectory()) {
+        walk(p, rel);
+        continue;
+      }
+      if (!st.isFile()) throw new ConfigError(where, `docs/${rel} must be a regular file`);
+      if (!DOC_PATH_RE.test(rel)) throw new ConfigError(where, `docs/${rel}: invalid path (plain names, at most 3 directory levels)`);
+      const buf = readFileSync(p);
+      if (buf.length > MAX_DOC_BYTES) throw new ConfigError(where, `docs/${rel} is too large (${buf.length} > ${MAX_DOC_BYTES} bytes)`);
+      if (buf.includes(0)) throw new ConfigError(where, `docs/${rel} must be a text file`);
+      const content = buf.toString('utf8');
+      if (!content.trim()) throw new ConfigError(where, `docs/${rel} is empty`);
+      out.push({ path: rel, content });
+    }
+  };
+  walk(root, '');
+  if (out.length > MAX_DOCS) throw new ConfigError(where, `too many files in docs/ (${out.length} > ${MAX_DOCS})`);
+  return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
 /** Markdown name for skills/agents/commands files. */
 export const MD_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 /** Frontmatter keys allowed in agents/<name>.md and commands/<name>.md. */
@@ -390,8 +426,10 @@ export function loadConfigFromDir(dir: string, id?: string): AgentConfig {
     if (bin.length) cfg.bin = bin;
     if (agents.length) cfg.agents = agents;
     if (commands.length) cfg.commands = commands;
+    const docs = readDocsDir(where, dir);
+    if (docs.length) cfg.docs = docs;
   } else {
-    for (const sub of ['bin', 'agents', 'commands'])
+    for (const sub of ['bin', 'agents', 'commands', 'docs'])
       if (existsSync(join(dir, sub)) && readdirSync(join(dir, sub)).some((f) => !f.startsWith('.')))
         throw new ConfigError(where, `${sub}/ is only supported with backend 'claude-code'`);
   }
@@ -472,7 +510,7 @@ export function hashConfig(cfg: AgentConfig): string {
 /** Write a loadable copy of the config (same on-disk layout) plus resolved.json and hash.txt. */
 export function snapshotConfig(cfg: AgentConfig, destDir: string): void {
   mkdirSync(join(destDir, 'skills'), { recursive: true });
-  const { systemPrompt, skills, tools, claudeMdContent, bin, agents, commands, ...rest } = cfg;
+  const { systemPrompt, skills, tools, claudeMdContent, bin, agents, commands, docs, ...rest } = cfg;
   const writeDir = (sub: string, files: { name: string; content: string }[] | undefined, ext: string) => {
     if (!files?.length) return;
     mkdirSync(join(destDir, sub), { recursive: true });
@@ -481,6 +519,11 @@ export function snapshotConfig(cfg: AgentConfig, destDir: string): void {
   writeDir('bin', bin, '');
   writeDir('agents', agents, '.md');
   writeDir('commands', commands, '.md');
+  for (const d of docs ?? []) {
+    const p = join(destDir, 'docs', d.path);
+    mkdirSync(join(p, '..'), { recursive: true });
+    writeFileSync(p, d.content);
+  }
   writeFileSync(join(destDir, 'config.json'), JSON.stringify(rest, null, 2) + '\n');
   if (claudeMdContent !== undefined) writeFileSync(join(destDir, 'CLAUDE.md'), claudeMdContent);
   writeFileSync(join(destDir, 'system-prompt.md'), systemPrompt);

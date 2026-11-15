@@ -59,6 +59,86 @@ export interface EvaluateRunOptions {
   /** Infra tests only: allow the mock provider for the browser agent. */
   allowMockBrowserAgent?: boolean;
   experimentId?: string;
+  /** Benchmark task (docs/TASKS.md). Absent or 'todo' = the todo evaluator below. Others dispatch to the task's evaluateTask. */
+  taskId?: string;
+  /** git-diff tasks: the run's workspace.patch (default results/runs/<runId>/workspace.patch). */
+  patchFile?: string;
+  /** TESTS: replace the task registry / evaluator module loading. */
+  taskDeps?: { getTask?: (id: string) => import('../runner/tasks.js').Task; loadEvaluator?: (task: import('../runner/tasks.js').Task) => Promise<EvaluateTaskFn>; ensureTaskImage?: (task: import('../runner/tasks.js').Task) => Promise<{ baseImage: string }> };
+}
+
+/** Options of a task evaluator module's evaluateTask (docs/TASKS.md §4). */
+export interface EvaluateTaskOptions {
+  runId: string;
+  /** Absolute path of the run's workspace.patch (may be empty when the agent changed nothing). */
+  patchFile: string;
+  suite: Suite;
+  seed: number;
+  /** Absolute; created before the call. */
+  outDir: string;
+  /** Base image of the task (no Claude Code). */
+  image: string;
+  taskId: string;
+  experimentId?: string;
+}
+export type EvaluateTaskFn = (opts: EvaluateTaskOptions) => Promise<EvaluationResult>;
+
+async function loadTaskEvaluator(task: import('../runner/tasks.js').Task): Promise<EvaluateTaskFn> {
+  const { pathToFileURL } = await import('node:url');
+  if (!task.evaluatorPath) throw new Error(`task ${task.id} has no evaluator module`);
+  const mod = (await import(pathToFileURL(task.evaluatorPath).href)) as { evaluateTask?: EvaluateTaskFn };
+  if (typeof mod.evaluateTask !== 'function') throw new Error(`${task.evaluator} does not export evaluateTask()`);
+  return mod.evaluateTask;
+}
+
+/**
+ * Evaluate a non-todo task's run with its own evaluator. Never throws: a crash or a missing module becomes an
+ * evaluator-failure result (the run is not blamed).
+ */
+async function evaluateTaskRun(opts: EvaluateRunOptions, taskId: string): Promise<EvaluationResult> {
+  const startedAt = new Date().toISOString();
+  const suite: Suite = opts.suite === 'holdout' ? 'holdout' : 'dev';
+  const seed = Number.isFinite(opts.seed) ? opts.seed >>> 0 : seedFromString(opts.runId);
+  const outDir = path.resolve(opts.outDir ?? path.join(REPO_ROOT, 'results', 'runs', opts.runId, 'eval', suite));
+  fs.mkdirSync(outDir, { recursive: true });
+  const patchFile = path.resolve(opts.patchFile ?? path.join(opts.appDir ? path.dirname(opts.appDir) : path.join(REPO_ROOT, 'results', 'runs', opts.runId), 'workspace.patch'));
+  try {
+    const tasks = await import('../runner/tasks.js');
+    const task = (opts.taskDeps?.getTask ?? ((id: string) => tasks.getTask(id)))(taskId);
+    const evaluateTask = await (opts.taskDeps?.loadEvaluator ?? loadTaskEvaluator)(task);
+    const image = opts.image ?? (await (opts.taskDeps?.ensureTaskImage ?? tasks.ensureTaskImage)(task)).baseImage;
+    const r = await evaluateTask({ runId: opts.runId, patchFile, suite, seed, outDir, image, taskId, ...(opts.experimentId ? { experimentId: opts.experimentId } : {}) });
+    // browserAgent 'none' tasks are complete without the LLM browser agent; 'required' tasks honour skipBrowserAgent.
+    const skipped = task.browserAgent === 'required' ? !!opts.skipBrowserAgent || !!r.browserAgentSkipped : false;
+    return { ...r, runId: opts.runId, suite, browserAgentSkipped: skipped };
+  } catch (e) {
+    const msg = `evaluator error (task ${taskId}): ${trunc(String((e as Error)?.stack ?? e), 1500)}`;
+    log.error('task evaluator failed', { runId: opts.runId, taskId, error: msg });
+    const reportPath = path.join(outDir, 'report.json');
+    const result: EvaluationResult = {
+      runId: opts.runId,
+      suite,
+      seed,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      appStarted: false,
+      checks: [{ id: STARTUP_CHECK_ID, category: 'startup', mandatory: true, outcome: 'error', message: msg, attempts: 1 }],
+      visualScore: 0,
+      visualThreshold: VISUAL_THRESHOLD,
+      passed: false,
+      evaluatorFailure: true,
+      failureSummary: msg,
+      evaluatorUsage: sumUsage([]),
+      reportFile: relOrAbs(reportPath),
+      browserAgentSkipped: false,
+    };
+    try {
+      fs.writeFileSync(reportPath, JSON.stringify({ ...result, taskId }, null, 2) + '\n');
+    } catch {
+      /* best effort */
+    }
+    return result;
+  }
 }
 
 async function resolveImage(image?: string): Promise<string> {
@@ -79,6 +159,7 @@ const relOrAbs = (p: string) => {
 };
 
 export async function evaluateRun(opts: EvaluateRunOptions): Promise<EvaluationResult> {
+  if (opts.taskId && opts.taskId !== 'todo') return evaluateTaskRun(opts, opts.taskId);
   const startedAt = new Date().toISOString();
   const suite: Suite = opts.suite === 'holdout' ? 'holdout' : 'dev';
   const seed = Number.isFinite(opts.seed) ? opts.seed >>> 0 : seedFromString(opts.runId);

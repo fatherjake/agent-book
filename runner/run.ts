@@ -1,7 +1,10 @@
 /**
- * runCodingAgent: one complete, isolated coding run.
- *   ensure image → create sandbox (+ /spec) → agent loop → snapshot /workspace (no node_modules)
+ * runCodingAgent: one complete, isolated coding run of one task (docs/TASKS.md; default 'todo').
+ *   ensure image → create sandbox (+ /spec, task resources/mounts, services hook) → agent loop
+ *   → snapshot (tree: /workspace without node_modules → app/; git-diff: workspace.patch vs the checkpoint)
  *   → run.json → destroy container (always).
+ * The task drives image, prompt, spec dir, sandbox resources, extra mounts, limits and snapshot mode;
+ * todo keeps the original code path unchanged.
  * Never throws for run failures (docker, API, broken agent); they are recorded in the result.
  */
 import { randomBytes } from 'node:crypto';
@@ -15,6 +18,9 @@ import { TokenTracker, emptyTotals } from './token-tracker.js';
 import { createProvider } from './providers/index.js';
 import { runAgent, type SpecFile } from './agent.js';
 import { logger } from './logger.js';
+import { DEFAULT_TASK_ID, getTask, isTodoTask, readTaskPrompt, taskLimits, type Task } from './tasks.js';
+import type { CreateSandboxOptions } from './sandbox.js';
+import { recordCheckpoint, snapshotGitDiff } from './snapshot.js';
 
 const log = logger('run');
 
@@ -38,7 +44,10 @@ export interface RunCodingAgentOptions {
   specDir?: string;
   /** Test hooks: skip ensureImage / docker. */
   image?: ImageInfo;
-  sandboxFactory?: (opts: { image: ImageInfo; runId: string; specDir: string }) => Promise<Sandbox>;
+  /** `sandbox`: the createSandbox options the run would have used (task resources, mounts, start hook). */
+  sandboxFactory?: (opts: { image: ImageInfo; runId: string; specDir: string; task: Task; sandbox: Partial<CreateSandboxOptions> }) => Promise<Sandbox>;
+  /** Benchmark task (id or loaded task). Default 'todo'. */
+  task?: string | Task;
   /** Observer for each usage record (e.g. SQLite). */
   onUsageRecord?: (r: import('./types.js').UsageRecord) => void;
   diskLimitMB?: number;
@@ -90,6 +99,71 @@ export function readSpecFile(specDir: string, name: string): SpecFile | undefine
 
 const rel = (p: string) => relative(REPO_ROOT, p).split('\\').join('/');
 
+/** Every non-todo task image provides this idempotent hook; the runner starts its services at sandbox creation. */
+export const TASK_SERVICES_START = '/opt/frugal/task/services start';
+
+/** createSandbox options that come from the task (resources, extra mounts, services hook). todo: none (defaults). */
+export function taskSandboxOptions(task: Task): Partial<CreateSandboxOptions> {
+  if (isTodoTask(task)) return {};
+  return {
+    cpus: task.sandbox.cpus,
+    memory: task.sandbox.memory,
+    pidsLimit: task.sandbox.pidsLimit,
+    ...(task.sandbox.extraVolumes?.length ? { extraVolumes: task.sandbox.extraVolumes } : {}),
+    ...(task.sandbox.shmSize ? { shmSize: task.sandbox.shmSize } : {}),
+    extraTmpfs: [...(task.sandbox.extraTmpfs ?? [])],
+    startHook: { command: TASK_SERVICES_START, timeoutSec: 300 },
+  };
+}
+
+/**
+ * Disk limit of a run in MiB. todo: the limit applies to the whole /workspace (unchanged). Other tasks start from a
+ * large checkout (gems, node_modules), so the limit applies to the GROWTH over the size at start.
+ */
+async function diskLimitFor(sandbox: Sandbox, task: Task, limitMB: number): Promise<number> {
+  if (isTodoTask(task) || limitMB <= 0) return limitMB;
+  const r = await sandbox.exec('du -sk /workspace 2>/dev/null | cut -f1', { timeoutSec: 120 }).catch(() => null);
+  const mb = r ? parseInt(r.stdout, 10) / 1024 : NaN;
+  return Number.isFinite(mb) ? Math.ceil(mb) + limitMB : limitMB;
+}
+
+/** The container's PATH as the image defines it (undefined when it cannot be read). */
+async function imagePath(sandbox: Sandbox): Promise<string | undefined> {
+  const r = await sandbox.exec('printf %s "$PATH"', { timeoutSec: 30 }).catch(() => null);
+  const p = r?.exitCode === 0 ? r.stdout.trim() : '';
+  return /^\/[A-Za-z0-9_.\/:-]*$/.test(p) ? p : undefined;
+}
+
+function resolveTask(t: string | Task | undefined): Task {
+  return typeof t === 'object' && t ? t : getTask(t ?? DEFAULT_TASK_ID);
+}
+
+/** Read the config's inline spec files from the task's spec dir. Missing files are skipped (warned for todo only). */
+function inlineSpecFiles(config: AgentConfig, specDir: string, task: Task): SpecFile[] {
+  const out: SpecFile[] = [];
+  for (const name of config.inlineSpecFiles) {
+    const f = readSpecFile(specDir, name);
+    if (f) out.push(f);
+    else if (isTodoTask(task)) log.warn('inline spec file not found; skipping', { name, specDir });
+    else log.debug('inline spec file not in this task\'s spec; skipping', { name, task: task.id });
+  }
+  return out;
+}
+
+/**
+ * Snapshot the workspace per the task's mode. tree: copy /workspace (no node_modules) to app/.
+ * git-diff: workspace.patch against the checkpoint recorded at start.
+ */
+async function snapshotWorkspace(sandbox: Sandbox, task: Task, checkpoint: string | undefined, paths: { appSnapshotDir: string; workspacePatch: string }, runId: string): Promise<void> {
+  if (task.workspace.snapshot === 'git-diff') {
+    if (!checkpoint) throw new Error('no checkpoint commit recorded at start');
+    const s = await snapshotGitDiff(sandbox as unknown as import('./snapshot.js').SnapshotSandbox, checkpoint, paths.workspacePatch);
+    log.info('workspace patch written', { runId, bytes: s.bytes, files: s.files.length });
+    return;
+  }
+  await sandbox.copyOut('/workspace', paths.appSnapshotDir);
+}
+
 export async function runCodingAgent(opts: RunCodingAgentOptions): Promise<CodingRunResult> {
   const result = await runCodingAgentInner(opts);
   // Session token profile (profile.json + profile.md in the run dir). Best effort: never fails a run.
@@ -104,24 +178,26 @@ export async function runCodingAgent(opts: RunCodingAgentOptions): Promise<Codin
 
 async function runCodingAgentInner(opts: RunCodingAgentOptions): Promise<CodingRunResult> {
   const { config } = opts;
-  const limits = effectiveLimits(config.limits, opts.limitsOverride);
+  const task = resolveTask(opts.task);
+  const limits = effectiveLimits(taskLimits(config.limits, task), opts.limitsOverride);
   const runId = opts.runId ?? newRunId();
   const startedAt = new Date();
   const runDir = join(opts.resultsDir ?? resultsDir(), 'runs', runId);
-  const specDir = opts.specDir ?? SPEC_DIR;
+  const specDir = opts.specDir ?? (isTodoTask(task) ? SPEC_DIR : task.specPath);
   const paths = {
     appSnapshotDir: join(runDir, 'app'),
     traceFile: join(runDir, 'trace.jsonl'),
     usageFile: join(runDir, 'usage.jsonl'),
     configSnapshotDir: join(runDir, 'config'),
+    workspacePatch: join(runDir, 'workspace.patch'),
   };
   mkdirSync(runDir, { recursive: true });
 
   const backend = selectBackend(config, opts.provider);
-  if (backend === 'claude-code') return runClaudeCodeBackend(opts, { runId, runDir, startedAt, limits, specDir, paths });
+  if (backend === 'claude-code') return runClaudeCodeBackend(opts, { runId, runDir, startedAt, limits, specDir, paths, task });
   if (config.backend === 'claude-code') log.warn('claude-code config run with the mock provider: using the api agent loop', { runId });
 
-  const tracker = new TokenTracker({ role: 'coding', runId, experimentId: opts.experimentId, usageFile: paths.usageFile, onRecord: opts.onUsageRecord });
+  const tracker = new TokenTracker({ role: 'coding', runId, experimentId: opts.experimentId, taskId: task.id, usageFile: paths.usageFile, onRecord: opts.onUsageRecord });
   let status: RunStatus = 'infra_error';
   let failureReason: string | undefined;
   let toolCalls = 0;
@@ -129,6 +205,7 @@ async function runCodingAgentInner(opts: RunCodingAgentOptions): Promise<CodingR
   let configHash = '';
   let usedMock = config.provider === 'mock';
   let sandbox: Sandbox | undefined;
+  let checkpoint: string | undefined;
 
   try {
     configHash = hashConfig(config);
@@ -137,22 +214,24 @@ async function runCodingAgentInner(opts: RunCodingAgentOptions): Promise<CodingR
     const provider = opts.provider ?? createProvider(config.provider);
     usedMock = provider.isMock;
 
-    image = opts.image ?? (await (await import('./sandbox.js')).ensureImage());
-
-    const inlineSpec: SpecFile[] = [];
-    for (const name of config.inlineSpecFiles) {
-      const f = readSpecFile(specDir, name);
-      if (f) inlineSpec.push(f);
-      else log.warn('inline spec file not found; skipping', { name, specDir });
+    if (opts.image) image = opts.image;
+    else if (isTodoTask(task)) image = await (await import('./sandbox.js')).ensureImage();
+    else {
+      const ti = await (await import('./tasks.js')).ensureTaskImage(task, { backend: 'api' });
+      image = { image: ti.image, imageId: ti.imageId, starterHash: ti.starterHash };
     }
-    const designImage = config.designDelivery === 'inline-image' ? readSpecFile(specDir, 'design.png') : undefined;
-    if (config.designDelivery === 'inline-image' && !designImage) log.warn('design.png not found in spec dir', { specDir });
 
-    if (opts.sandboxFactory) sandbox = await opts.sandboxFactory({ image, runId, specDir });
+    const inlineSpec = inlineSpecFiles(config, specDir, task);
+    const designImage = config.designDelivery === 'inline-image' ? readSpecFile(specDir, 'design.png') : undefined;
+    if (config.designDelivery === 'inline-image' && !designImage && isTodoTask(task)) log.warn('design.png not found in spec dir', { specDir });
+
+    const sbOpts = taskSandboxOptions(task);
+    if (opts.sandboxFactory) sandbox = await opts.sandboxFactory({ image, runId, specDir, task, sandbox: sbOpts });
     else {
       const { createSandbox } = await import('./sandbox.js');
-      sandbox = await createSandbox({ image: image.image, imageId: image.imageId, runId, role: 'coding', network: 'none', specDir });
+      sandbox = await createSandbox({ image: image.image, imageId: image.imageId, runId, role: 'coding', network: 'none', specDir, ...sbOpts });
     }
+    if (task.workspace.snapshot === 'git-diff') checkpoint = await recordCheckpoint(sandbox as unknown as import('./snapshot.js').SnapshotSandbox);
 
     const result = await runAgent({
       config: { ...config, limits },
@@ -163,14 +242,15 @@ async function runCodingAgentInner(opts: RunCodingAgentOptions): Promise<CodingR
       designImage,
       traceFile: paths.traceFile,
       signal: opts.signal,
-      diskLimitMB: opts.diskLimitMB,
+      diskLimitMB: isTodoTask(task) ? opts.diskLimitMB : await diskLimitFor(sandbox, task, opts.diskLimitMB ?? 2048),
+      ...(opts.taskPrompt ? { taskPrompt: opts.taskPrompt } : isTodoTask(task) ? {} : { taskPrompt: readTaskPrompt(task) }),
     });
     status = result.status;
     failureReason = result.failureReason;
     toolCalls = result.toolCalls;
 
     try {
-      await sandbox.copyOut('/workspace', paths.appSnapshotDir);
+      await snapshotWorkspace(sandbox, task, checkpoint, paths, runId);
     } catch (e) {
       const msg = `app snapshot failed: ${String((e as Error)?.message ?? e)}`;
       log.error(msg, { runId });
@@ -212,9 +292,11 @@ async function runCodingAgentInner(opts: RunCodingAgentOptions): Promise<CodingR
       traceFile: rel(paths.traceFile),
       usageFile: rel(paths.usageFile),
       configSnapshotDir: rel(paths.configSnapshotDir),
+      ...(task.workspace.snapshot === 'git-diff' ? { workspacePatch: rel(paths.workspacePatch) } : {}),
     },
     usedMockProvider: usedMock,
     effectiveLimits: limits,
+    taskId: task.id,
   };
   try {
     writeFileSync(join(runDir, 'run.json'), JSON.stringify(result, null, 2) + '\n');
@@ -235,7 +317,8 @@ interface RunCtx {
   startedAt: Date;
   limits: RunLimits;
   specDir: string;
-  paths: { appSnapshotDir: string; traceFile: string; usageFile: string; configSnapshotDir: string };
+  paths: { appSnapshotDir: string; traceFile: string; usageFile: string; configSnapshotDir: string; workspacePatch: string };
+  task: Task;
 }
 
 const CC_HOME_TMPFS = '/home/node:rw,nosuid,nodev,size=256m,uid=1000,gid=1000,mode=0755';
@@ -248,8 +331,10 @@ const CC_HOME_TMPFS = '/home/node:rw,nosuid,nodev,size=256m,uid=1000,gid=1000,mo
  */
 async function runClaudeCodeBackend(opts: RunCodingAgentOptions, ctx: RunCtx): Promise<CodingRunResult> {
   const { config } = opts;
-  const { runId, runDir, startedAt, limits, specDir, paths } = ctx;
+  const { runId, runDir, startedAt, limits, specDir, paths, task } = ctx;
+  const todo = isTodoTask(task);
   const streamFile = join(runDir, 'claude-stream.jsonl');
+  let checkpoint: string | undefined;
   let status: RunStatus = 'infra_error';
   let failureReason: string | undefined;
   let toolCalls = 0;
@@ -270,6 +355,7 @@ async function runClaudeCodeBackend(opts: RunCodingAgentOptions, ctx: RunCtx): P
       role: 'coding',
       runId,
       experimentId: opts.experimentId,
+      taskId: task.id,
       usageFile: paths.usageFile,
       limits: { maxTotalTokens: limits.maxTotalTokens, maxModelCalls: limits.maxModelCalls },
       onUsageRecord: opts.onUsageRecord,
@@ -281,23 +367,28 @@ async function runClaudeCodeBackend(opts: RunCodingAgentOptions, ctx: RunCtx): P
     if (opts.image) {
       image = opts.image;
       forwarderImage = opts.image.image;
-    } else {
+    } else if (todo) {
       const { ensureClaudeCodeImage } = await import('./claude-code-image.js');
       const cc = await ensureClaudeCodeImage();
       image = { image: cc.image, imageId: cc.imageId, starterHash: cc.starterHash };
       forwarderImage = cc.baseImage;
+    } else {
+      const { ensureTaskImage } = await import('./tasks.js');
+      const ti = await ensureTaskImage(task);
+      image = { image: ti.image, imageId: ti.imageId, starterHash: ti.starterHash };
+      // The forwarder is trusted infrastructure (a node one-liner as user node): always the todo benchmark image.
+      forwarderImage = (await (await import('./sandbox.js')).ensureImage()).image;
     }
 
-    const inlineSpec = [];
-    for (const name of config.inlineSpecFiles) {
-      const f = readSpecFile(specDir, name);
-      if (f) inlineSpec.push(f);
-      else log.warn('inline spec file not found; skipping', { name, specDir });
-    }
-    const { buildClaudeCodePrompt, runClaudeCodeInSandbox, streamToTrace, countToolUses, streamResultTotals, FRUGAL_OPT_TMPFS, readBinAuditLog, hookEventCounts } = await import('./claude-code.js');
-    const prompt = opts.taskPrompt ?? buildClaudeCodePrompt(config, inlineSpec);
+    const inlineSpec = inlineSpecFiles(config, specDir, task);
+    const { buildClaudeCodePrompt, buildTaskPrompt, runClaudeCodeInSandbox, streamToTrace, countToolUses, streamResultTotals, optTmpfsMounts, readBinAuditLog, hookEventCounts } = await import('./claude-code.js');
+    const prompt = opts.taskPrompt ?? (todo ? buildClaudeCodePrompt(config, inlineSpec) : buildTaskPrompt(readTaskPrompt(task), config, inlineSpec));
+    const optLayout = todo ? 'single' : 'split';
 
-    if (opts.sandboxFactory) sandbox = await opts.sandboxFactory({ image, runId, specDir });
+    const tso = taskSandboxOptions(task);
+    // /opt/frugal holds the config's bin scripts and docs (root-owned, read-only to the agent; outside /workspace).
+    const sbOpts: Partial<CreateSandboxOptions> = { ...tso, home: '/home/node', extraTmpfs: [CC_HOME_TMPFS, ...optTmpfsMounts(config, optLayout), ...(tso.extraTmpfs ?? [])] };
+    if (opts.sandboxFactory) sandbox = await opts.sandboxFactory({ image, runId, specDir, task, sandbox: sbOpts });
     else {
       const { createGatewayNetwork } = await import('./gateway-network.js');
       network = await createGatewayNetwork({ runId, gatewayPort: gateway.port, image: forwarderImage });
@@ -309,15 +400,16 @@ async function runClaudeCodeBackend(opts: RunCodingAgentOptions, ctx: RunCtx): P
         role: 'coding',
         network: network.network,
         specDir,
-        home: '/home/node',
-        // /opt/frugal holds the config's bin scripts (root-owned, read-only to the agent; outside /workspace).
-        extraTmpfs: [CC_HOME_TMPFS, ...(config.bin?.length ? [FRUGAL_OPT_TMPFS] : [])],
+        ...sbOpts,
       });
     }
+    if (task.workspace.snapshot === 'git-diff') checkpoint = await recordCheckpoint(sandbox as unknown as import('./snapshot.js').SnapshotSandbox);
     const gatewayUrl = network?.gatewayUrl ?? gateway.containerUrl;
 
     // Workspace disk limit (same default as the api loop): checked once a minute.
-    const diskLimit = opts.diskLimitMB ?? 2048;
+    const diskLimit = await diskLimitFor(sandbox, task, opts.diskLimitMB ?? 2048);
+    // Task images may extend PATH (e.g. /opt/frugal/task); bin scripts are prepended to the image's PATH.
+    const basePath = todo || !config.bin?.length ? undefined : await imagePath(sandbox);
     const ctrl = new AbortController();
     let diskExceeded: string | undefined;
     const onOuterAbort = () => ctrl.abort();
@@ -346,6 +438,8 @@ async function runClaudeCodeBackend(opts: RunCodingAgentOptions, ctx: RunCtx): P
         timeoutSec: limits.maxRuntimeSec,
         streamFile,
         signal: ctrl.signal,
+        optLayout,
+        ...(basePath ? { basePath } : {}),
       });
     } finally {
       if (diskTimer) clearInterval(diskTimer);
@@ -415,7 +509,7 @@ async function runClaudeCodeBackend(opts: RunCodingAgentOptions, ctx: RunCtx): P
     }
 
     try {
-      await sandbox.copyOut('/workspace', paths.appSnapshotDir);
+      await snapshotWorkspace(sandbox, task, checkpoint, paths, runId);
     } catch (e) {
       const msg = `app snapshot failed: ${String((e as Error)?.message ?? e)}`;
       log.error(msg, { runId });
@@ -428,7 +522,12 @@ async function runClaudeCodeBackend(opts: RunCodingAgentOptions, ctx: RunCtx): P
     try {
       const { auditCodingRun } = await import('../researcher/config-guard.js');
       const log0 = await readBinAuditLog(sandbox as unknown as import('./claude-code.js').ClaudeSandbox, config);
-      configAudit = auditCodingRun({ config, ...log0, hookCounts: hookEventCounts(r.events), appDir: paths.appSnapshotDir });
+      configAudit = auditCodingRun({
+        config,
+        ...log0,
+        hookCounts: hookEventCounts(r.events),
+        ...(task.workspace.snapshot === 'git-diff' ? { patchFile: paths.workspacePatch } : { appDir: paths.appSnapshotDir }),
+      });
       if (configAudit.flagged) {
         log.error('config audit flagged the run (app code from the config)', { runId, reasons: configAudit.reasons });
         if (status === 'completed') status = 'agent_error';
@@ -476,9 +575,11 @@ async function runClaudeCodeBackend(opts: RunCodingAgentOptions, ctx: RunCtx): P
       traceFile: rel(paths.traceFile),
       usageFile: rel(paths.usageFile),
       configSnapshotDir: rel(paths.configSnapshotDir),
+      ...(task.workspace.snapshot === 'git-diff' ? { workspacePatch: rel(paths.workspacePatch) } : {}),
     },
     usedMockProvider: false,
     effectiveLimits: limits,
+    taskId: task.id,
     backend: 'claude-code',
     ...(usageLimitResetAt ? { usageLimitResetAt } : {}),
     ...(usageCrossCheck ? { usageCrossCheck } : {}),

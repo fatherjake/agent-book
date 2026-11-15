@@ -96,8 +96,27 @@ export const FRUGAL_BIN_DIR = '/opt/frugal/bin';
 export const FRUGAL_LIBEXEC_DIR = '/opt/frugal/libexec';
 /** Audit log the bin wrappers append to (inside the container; writable by node, so best-effort). */
 export const FRUGAL_AUDIT_LOG = '/tmp/.frugal/bin-audit.jsonl';
-/** tmpfs mount for /opt/frugal (only added when the config has bin/ scripts). */
+/** tmpfs mount for /opt/frugal (only added when the config has bin/ scripts or docs/). todo layout. */
 export const FRUGAL_OPT_TMPFS = `${FRUGAL_OPT_DIR}:rw,nosuid,nodev,exec,size=8m,mode=0755`;
+/** Config reference docs (docs/<path>): root-owned, read-only, never loaded into context automatically. */
+export const FRUGAL_DOCS_DIR = '/opt/frugal/docs';
+/**
+ * 'single': one tmpfs AT /opt/frugal (todo; the image has no /opt/frugal). 'split': separate tmpfs mounts
+ * for /opt/frugal/bin, /opt/frugal/libexec and /opt/frugal/docs, so a task image's own /opt/frugal/task
+ * (services hook) stays visible.
+ */
+export type OptLayout = 'single' | 'split';
+
+/** tmpfs mounts the coding container needs for the config's bin scripts and docs. */
+export function optTmpfsMounts(cfg: Pick<AgentConfig, 'bin' | 'docs'>, layout: OptLayout = 'single'): string[] {
+  const bin = !!cfg.bin?.length;
+  const docs = !!cfg.docs?.length;
+  if (layout === 'single') return bin || docs ? [FRUGAL_OPT_TMPFS] : [];
+  const out: string[] = [];
+  if (bin) out.push(`${FRUGAL_BIN_DIR}:rw,nosuid,nodev,exec,size=4m,mode=0755`, `${FRUGAL_LIBEXEC_DIR}:rw,nosuid,nodev,exec,size=4m,mode=0755`);
+  if (docs) out.push(`${FRUGAL_DOCS_DIR}:rw,nosuid,nodev,noexec,size=2m,mode=0755`);
+  return out;
+}
 /** PATH of the claude process (and therefore of its Bash tool and hooks) in the coding container. */
 export const CONTAINER_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
@@ -527,6 +546,23 @@ export function buildClaudeCodePrompt(cfg: Pick<AgentConfig, 'designDelivery' | 
   return text;
 }
 
+/**
+ * Task prompt for a non-todo task: prompt.md, then the config's inline spec files that exist in the task's
+ * spec dir (others are skipped), then the images it asks to view.
+ */
+export function buildTaskPrompt(taskPrompt: string, cfg: Pick<AgentConfig, 'designDelivery' | 'inlineSpecFiles'>, inline: { name: string; content?: string }[]): string {
+  let text = taskPrompt.replace(/\s+$/, '');
+  const names = new Set(inline.map((f) => f.name));
+  if (cfg.designDelivery === 'inline-image' && names.has('design.png')) text += `\n\nStart by viewing the reference design /spec/design.png with the Read tool.`;
+  const files = inline.filter((f) => f.content !== undefined);
+  if (files.length) {
+    text += '\n\nSpecification files (also available under /spec):';
+    for (const f of files) text += `\n\n<file path="/spec/${f.name}">\n${f.content!.replace(/\s+$/, '')}\n</file>`;
+  }
+  for (const img of inline.filter((f) => f.content === undefined && f.name !== 'design.png')) text += `\n\nAlso view the reference image /spec/${img.name} with the Read tool.`;
+  return text;
+}
+
 /** Add YAML frontmatter (name, description) to a skill file that lacks it. */
 export function skillMarkdown(name: string, content: string): string {
   if (/^---\r?\n[\s\S]*?\r?\n---/.test(content) && /^---[\s\S]*?\bdescription\s*:/m.test(content)) return content;
@@ -610,8 +646,29 @@ exit $rc
 `;
 }
 
+/** Install the config's docs/ files read-only at /opt/frugal/docs (call before installBinScripts). */
+export async function installDocs(sandbox: ClaudeSandbox, cfg: AgentConfig, layout: OptLayout = 'single'): Promise<void> {
+  const docs = cfg.docs ?? [];
+  if (!docs.length) return;
+  if (!sandbox.exec) throw new Error('sandbox cannot exec: docs cannot be installed');
+  for (const d of docs) {
+    if (!DOC_PATH_RE.test(d.path)) throw new Error(`invalid docs path ${d.path}`);
+    await sandbox.writeFileBuffer(`${FRUGAL_DOCS_DIR}/${d.path}`, Buffer.from(d.content, 'utf8'), { user: 'root' });
+  }
+  // Without bin scripts the single layout's /opt/frugal is not locked by installBinScripts; lock it here.
+  const lockOpt = layout === 'single' && !cfg.bin?.length ? ` ${FRUGAL_OPT_DIR}` : '';
+  const r = await sandbox.exec(`find ${FRUGAL_DOCS_DIR} -type f -exec chmod 0444 {} + && find ${FRUGAL_DOCS_DIR} -type d -exec chmod 0555 {} +${lockOpt ? ` && chmod 0555${lockOpt}` : ''}`, {
+    user: 'root',
+    timeoutSec: 30,
+  });
+  if (r.exitCode !== 0) throw new Error(`installing docs failed: ${r.stderr.trim().slice(0, 300)}`);
+}
+
+/** docs/<path> inside a config: up to 3 directory levels, plain names. */
+export const DOC_PATH_RE = /^(?:[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}\/){0,3}[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
+
 /** Install the config's bin scripts (root-owned, read-only to node) behind audit wrappers. */
-export async function installBinScripts(sandbox: ClaudeSandbox, cfg: AgentConfig): Promise<void> {
+export async function installBinScripts(sandbox: ClaudeSandbox, cfg: AgentConfig, layout: OptLayout = 'single'): Promise<void> {
   const bin = cfg.bin ?? [];
   if (!bin.length) return;
   if (!sandbox.exec) throw new Error('sandbox cannot exec: bin scripts cannot be installed');
@@ -621,7 +678,8 @@ export async function installBinScripts(sandbox: ClaudeSandbox, cfg: AgentConfig
     await sandbox.writeFileBuffer(`${FRUGAL_BIN_DIR}/${b.name}`, Buffer.from(binWrapper(b.name), 'utf8'), { user: 'root' });
   }
   // Files were written by root (the container runs with --cap-drop ALL, so no chown is needed or possible).
-  const r = await sandbox.exec(`chmod 0755 ${FRUGAL_BIN_DIR}/* ${FRUGAL_LIBEXEC_DIR}/* && chmod 0555 ${FRUGAL_BIN_DIR} ${FRUGAL_LIBEXEC_DIR} ${FRUGAL_OPT_DIR}`, {
+  // split layout: /opt/frugal itself belongs to the (read-only) image, only the mounts are locked.
+  const r = await sandbox.exec(`chmod 0755 ${FRUGAL_BIN_DIR}/* ${FRUGAL_LIBEXEC_DIR}/* && chmod 0555 ${FRUGAL_BIN_DIR} ${FRUGAL_LIBEXEC_DIR}${layout === 'single' ? ` ${FRUGAL_OPT_DIR}` : ''}`, {
     user: 'root',
     timeoutSec: 30,
   });
@@ -678,7 +736,11 @@ export async function readBinAuditLog(sandbox: ClaudeSandbox, cfg: AgentConfig):
 }
 
 /** Env for the in-container claude process. */
-export function buildClaudeEnv(cfg: AgentConfig, gatewayUrl: string): Record<string, string> {
+/**
+ * `basePath`: the image's own PATH (non-todo task images put tools such as /opt/frugal/task on it); bin scripts
+ * are prepended to it. Default CONTAINER_PATH (todo, unchanged).
+ */
+export function buildClaudeEnv(cfg: AgentConfig, gatewayUrl: string, basePath: string = CONTAINER_PATH): Record<string, string> {
   const env: Record<string, string> = {};
   if (cfg.thinkingBudget !== undefined) env.MAX_THINKING_TOKENS = String(cfg.thinkingBudget);
   if (cfg.maxOutputTokensPerCall > 0) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(cfg.maxOutputTokensPerCall);
@@ -686,7 +748,7 @@ export function buildClaudeEnv(cfg: AgentConfig, gatewayUrl: string): Record<str
   return {
     ...env,
     ...CLAUDE_BASE_ENV,
-    ...(cfg.bin?.length ? { PATH: `${FRUGAL_BIN_DIR}:${CONTAINER_PATH}` } : {}),
+    ...(cfg.bin?.length ? { PATH: `${FRUGAL_BIN_DIR}:${basePath}` } : {}),
     HOME: CONTAINER_HOME,
     CLAUDE_CONFIG_DIR: CONTAINER_CONFIG_DIR,
     ANTHROPIC_BASE_URL: gatewayUrl,
@@ -733,11 +795,16 @@ export async function runClaudeCodeInSandbox(opts: {
   signal?: AbortSignal;
   /** Called with each stream event as it arrives. */
   onEvent?: (e: any) => void;
+  /** /opt/frugal layout (must match the mounts from optTmpfsMounts). Default 'single' (todo). */
+  optLayout?: OptLayout;
+  /** The image's PATH (non-todo tasks); bin scripts are prepended to it. Default CONTAINER_PATH. */
+  basePath?: string;
 }): Promise<SandboxRunResult> {
   const { sandbox, config } = opts;
   for (const f of claudeHomeFiles(config)) await sandbox.writeFileBuffer(f.path, Buffer.from(f.content, 'utf8'), { user: 'node' });
-  await installBinScripts(sandbox, config);
-  const env = buildClaudeEnv(config, opts.gatewayUrl);
+  await installDocs(sandbox, config, opts.optLayout);
+  await installBinScripts(sandbox, config, opts.optLayout);
+  const env = buildClaudeEnv(config, opts.gatewayUrl, opts.basePath);
   const claudeArgs = [
     '-p',
     '--output-format', 'stream-json',

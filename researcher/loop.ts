@@ -4,8 +4,15 @@
  *   recover → session → baseline bootstrap (if no verified best)
  *   while budgets allow:
  *     propose → apply (new immutable config dir) → quick run → verify (N runs)
- *     → promote iff every verification run passed, no mock, and median < best median × (1 - margin)
+ *     → promote iff the verification pass rate >= the dev task's minPassRate (todo: every run), no mock,
+ *       and median < best median × (1 - margin)
  *     → holdout on promotion (single pass/fail bit, never shown in detail to the research agent)
+ *
+ * Multi-task (docs/TASKS.md): quick, verification and baseline runs use settings.devTask; the best, the
+ * baseline bootstrap and promotion are per dev task (the best for todo and the best for
+ * mastodon-bookmarks are independent). The holdout uses settings.holdoutTask: when it equals the dev task
+ * it is the dev task's holdout suite (the old behaviour); otherwise the holdout task's runs (suite and phase
+ * 'holdout'), which never enter the research workspace or the digest.
  *
  * Claude subscription usage limits: when a coding run, an evaluation or a research proposal stops
  * because the subscription hit its usage limit, that is NOT a config (or proposal) failure. The loop
@@ -29,6 +36,7 @@ import { buildHistoryDigest, joinResearchText } from './history.js';
 import { applyProposal as defaultApplyProposal, configDir, hashFiles, OptimizerError, readConfigFiles as defaultReadConfigFiles, type ApplyOptions, type AppliedConfig } from './optimizer.js';
 import { ResearchProposalError, type ResearchAgent } from './research-agent.js';
 import { budgetsOf, type ResearchSettings } from './settings.js';
+import { meetsPassRate } from './experiment.js';
 
 const log = logger('loop');
 
@@ -67,6 +75,8 @@ export interface LoopDeps {
   /** Fresh coding provider per run (preferred for stateful scripted providers like the mock). */
   codingProviderFactory?: () => ModelProvider;
   evaluatorProvider?: ModelProvider;
+  /** Task lookup (default runner/tasks.ts getTask): minPassRate of the dev and holdout tasks. */
+  getTask?: (id: string) => { id: string; minPassRate: number };
 }
 
 export interface LoopPaths {
@@ -125,6 +135,11 @@ function newSessionId(now: number): string {
   return `sess-${ts}-${randomBytes(2).toString('hex')}`;
 }
 
+/** Published best-config dir of a dev task: results/best-config (todo) or results/best-config-<taskId>. */
+export function bestConfigDirFor(bestConfigDir: string, taskId: string = 'todo'): string {
+  return taskId === 'todo' ? bestConfigDir : `${bestConfigDir}-${taskId}`;
+}
+
 /** Copy the promoted config to results/best-config/ (previous copy is moved to best-config-history/). */
 export function publishBestConfig(
   bestConfigDir: string,
@@ -154,7 +169,8 @@ export function publishBestConfig(
   }
   writeFileSync(join(tmp, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
   if (existsSync(bestConfigDir)) {
-    const hist = join(parent, 'best-config-history');
+    const base = bestConfigDir.split(/[\\/]/).pop() ?? 'best-config';
+    const hist = join(parent, base === 'best-config' ? 'best-config-history' : `${base}-history`);
     mkdirSync(hist, { recursive: true });
     renameSync(bestConfigDir, join(hist, `${new Date().toISOString().replace(/[:.]/g, '-')}`));
   }
@@ -166,12 +182,13 @@ export function publishBestConfig(
  * config is best (the flagged one, or one derived from it, may currently be published).
  * Returns the newly published config id, or null when nothing changed.
  */
-export function syncPublishedBest(db: Db, p: { bestConfigDir: string; configsRoot: string }): string | null {
-  const best = db.getBestVerified();
+export function syncPublishedBest(db: Db, p: { bestConfigDir: string; configsRoot: string }, taskId: string = 'todo'): string | null {
+  const best = db.getBestVerified(taskId);
   if (!best) return null;
+  const bestConfigDir = bestConfigDirFor(p.bestConfigDir, taskId);
   let published: string | null = null;
   try {
-    published = JSON.parse(readFileSync(join(p.bestConfigDir, 'summary.json'), 'utf8')).configId ?? null;
+    published = JSON.parse(readFileSync(join(bestConfigDir, 'summary.json'), 'utf8')).configId ?? null;
   } catch {
     published = null;
   }
@@ -184,8 +201,9 @@ export function syncPublishedBest(db: Db, p: { bestConfigDir: string; configsRoo
   }
   if (!existsSync(dir)) return null;
   const exp = db.getExperiment(best.experimentId);
-  publishBestConfig(p.bestConfigDir, { fromDir: dir }, {
+  publishBestConfig(bestConfigDir, { fromDir: dir }, {
     configId: best.configId,
+    taskId,
     experimentId: best.experimentId,
     promotedAt: best.promotedAt,
     republishedAt: new Date().toISOString(),
@@ -213,6 +231,12 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
   const applyProposal = deps.applyProposal ?? defaultApplyProposal;
   const readConfigFiles = deps.readConfigFiles ?? defaultReadConfigFiles;
   const signal = opts.signal;
+  const devTask = settings.devTask ?? 'todo';
+  const holdoutTask = settings.holdoutTask ?? devTask;
+  const lookupTask = deps.getTask ?? (await import('../runner/tasks.js')).getTask;
+  const devMinPassRate = devTask === 'todo' && !deps.getTask ? 1 : lookupTask(devTask).minPassRate;
+  const holdoutMinPassRate = holdoutTask === devTask ? devMinPassRate : lookupTask(holdoutTask).minPassRate;
+  const bestConfigDir = bestConfigDirFor(paths.bestConfigDir, devTask);
 
   // ---- recovery -------------------------------------------------------------
   const rec = db.recoverInterrupted('research process ended before completion (recovered at startup)');
@@ -421,6 +445,7 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
     o: Omit<RunBenchmarkOptions, 'db' | 'sessionId' | 'provider' | 'providerFactory' | 'evaluatorProvider' | 'skipBrowserAgent' | 'maxTokensPerRun' | 'beforeRun'>,
   ) =>
     deps.runBenchmark({
+      taskId: devTask,
       ...o,
       db,
       sessionId,
@@ -468,7 +493,7 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
       sessionId,
       stopReason,
       experimentsRun: candidateCount(),
-      best: db.getBestVerified(),
+      best: db.getBestVerified(devTask),
       spentUsd: spent(),
       totalTokens: tokens().total,
       usageLimitWaitMs,
@@ -478,10 +503,11 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
   };
 
   const promote = (exp: ExperimentRow, configId: string, summary: StoredSummary) => {
-    const entry = db.recordPromotion({ experimentId: exp.id, configId, summary });
+    const entry = db.recordPromotion({ experimentId: exp.id, configId, summary, taskId: devTask });
     try {
-      publishBestConfig(paths.bestConfigDir, { fromDir: configDir(configId, paths.configsRoot) }, {
+      publishBestConfig(bestConfigDir, { fromDir: configDir(configId, paths.configsRoot) }, {
         configId,
+        taskId: devTask,
         experimentId: exp.id,
         promotedAt: entry.promotedAt,
         previousConfigId: entry.previousConfigId,
@@ -499,16 +525,17 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
 
   const runHoldout = async (exp: ExperimentRow, configId: string, sig: AbortSignal) => {
     if (!settings.holdout.onPromotion) return;
-    const res = await bench({ configId, runs: settings.holdout.runs, suite: 'holdout', phase: 'holdout', experimentId: exp.id, signal: sig });
+    // Same task: its holdout suite (old behaviour). Other task: that task's runs, also suite/phase 'holdout'.
+    const res = await bench({ configId, runs: settings.holdout.runs, suite: 'holdout', phase: 'holdout', experimentId: exp.id, signal: sig, taskId: holdoutTask });
     if (res.length < settings.holdout.runs) return; // cut short; leave bit unset
-    const passed = res.every((r) => r.passed);
+    const passed = holdoutTask === devTask && holdoutMinPassRate >= 1 ? res.every((r) => r.passed) : meetsPassRate(res.filter((r) => r.passed).length, res.length, holdoutMinPassRate);
     db.updateExperiment(exp.id, { holdoutPassed: passed });
     if (!passed) log.warn('holdout FAILED for promoted config (kept as best; flagged)', { configId });
   };
 
-  // ---- baseline bootstrap ---------------------------------------------------
-  if (!db.getBestVerified()) {
-    const done = db.listExperiments({ statuses: ['completed'] }).find((e) => e.kind === 'baseline' && (!e.isMock || isMockSession));
+  // ---- baseline bootstrap (per dev task) ---------------------------------------
+  if (!db.getBestVerified(devTask)) {
+    const done = db.listExperiments({ statuses: ['completed'], taskId: devTask }).find((e) => e.kind === 'baseline' && (!e.isMock || isMockSession));
     if (done) {
       log.warn('baseline already ran but did not qualify; continuing without a verified best', { experimentId: done.id });
     } else {
@@ -534,8 +561,9 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
         model: cj.model ?? 'unknown',
         isMock: isMockSession || cj.provider === 'mock',
         status: 'verifying',
+        taskId: devTask,
       });
-      log.info('running baseline verification', { runs: budgets.verificationRuns, experimentId: exp.id });
+      log.info('running baseline verification', { runs: budgets.verificationRuns, experimentId: exp.id, task: devTask });
       const es = experimentSignal();
       let results: BenchmarkRunResult[] = [];
       try {
@@ -550,7 +578,7 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
         finishAborted(exp, es.timedOut(), 'baseline verification');
         return finish(signal?.aborted ? 'interrupted' : (midRunStop ?? 'baseline_failed_to_run'));
       }
-      const summary = { ...summarize(results, 'baseline'), phase: 'verify' as const };
+      const summary = { ...summarize(results, 'baseline', { minPassRate: devMinPassRate, taskId: devTask }), phase: 'verify' as const };
       exp = db.updateExperiment(exp.id, { summary, isMock: exp.isMock || !!summary.usedMockProvider, outcome: 'baseline' });
       if (summary.meetsQualityRequirements) {
         promote(exp, 'baseline', summary);
@@ -582,12 +610,12 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
     midRunStop = null;
 
     try {
-      const republished = syncPublishedBest(db, paths);
+      const republished = syncPublishedBest(db, paths, devTask);
       if (republished) log.warn('best config changed by a cheating flag; republished', { configId: republished });
     } catch (e) {
       log.error('failed to sync published best config', { error: String(e) });
     }
-    const best = db.getBestVerified();
+    const best = db.getBestVerified(devTask);
     const parentConfigId = best?.configId ?? 'baseline';
     const bestMedian = best?.medianTokens ?? Number.POSITIVE_INFINITY;
     let parentFiles: Record<string, string>;
@@ -598,7 +626,7 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
       return finish('baseline_failed_to_run');
     }
     const parentCfg = parseConfigJson(parentFiles);
-    const experimentIndex = db.listExperiments().filter((e) => e.kind === 'candidate').length + 1;
+    const experimentIndex = db.listExperiments({ taskId: devTask }).filter((e) => e.kind === 'candidate').length + 1;
 
     let exp = db.insertExperiment({
       sessionId,
@@ -610,6 +638,7 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
       model: parentCfg.model ?? 'unknown',
       isMock: isMockSession || parentCfg.provider === 'mock',
       status: 'pending',
+      taskId: devTask,
     });
 
     // 1. propose
@@ -622,10 +651,17 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
           const res = await deps.researchAgent.propose(
             {
               // Agentic mode builds its sandbox workspace from these (simple modes ignore them).
-              context: { db, resultsDir: paths.resultsDir, configsRoot: paths.configsRoot, verificationRuns: budgets.verificationRuns },
+              context: {
+                db,
+                resultsDir: paths.resultsDir,
+                configsRoot: paths.configsRoot,
+                verificationRuns: budgets.verificationRuns,
+                taskId: devTask,
+                ...(holdoutTask !== devTask ? { hiddenTaskIds: [holdoutTask] } : {}),
+              },
               bestConfigId: parentConfigId,
               bestConfigFiles: parentFiles,
-              history: buildHistoryDigest(db, { maxExperiments: settings.historyMaxExperiments }),
+              history: buildHistoryDigest(db, { maxExperiments: settings.historyMaxExperiments, taskId: devTask }),
               experimentIndex,
               singleVariableExperiments: settings.singleVariableExperiments,
               whitelist,
@@ -761,7 +797,7 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
         if (midRunStop === 'usage_limit') return finish('usage_limit');
         continue;
       }
-      const vs: StoredSummary = { ...summarize(ver, applied.configId), phase: 'verify' };
+      const vs: StoredSummary = { ...summarize(ver, applied.configId, { minPassRate: devMinPassRate, taskId: devTask }), phase: 'verify' };
       exp = db.updateExperiment(exp.id, { summary: vs, isMock: exp.isMock || !!vs.usedMockProvider });
 
       // 5. decision
@@ -769,10 +805,10 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
       let outcome: ExperimentOutcome;
       let status: ExperimentStatus = 'completed';
       let notes: string | null = null;
-      if (vs.passes < vs.runs) {
+      if (!meetsPassRate(vs.passes, vs.runs, devMinPassRate)) {
         outcome = 'failed_verification';
         status = 'rejected';
-        notes = `${vs.passes}/${vs.runs} verification runs passed${vs.evaluatorFailures ? ` (${vs.evaluatorFailures} evaluator failures)` : ''}`;
+        notes = `${vs.passes}/${vs.runs} verification runs passed${devMinPassRate < 1 ? ` (minPassRate ${devMinPassRate})` : ''}${vs.evaluatorFailures ? ` (${vs.evaluatorFailures} evaluator failures)` : ''}`;
       } else if (vs.usedMockProvider || exp.isMock || vs.browserAgentSkipped || !vs.meetsQualityRequirements) {
         outcome = 'not_better';
         const why: string[] = [];

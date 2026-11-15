@@ -252,6 +252,11 @@ const RESEARCH_HOME_TMPFS = '/home/node:rw,nosuid,nodev,size=256m,uid=1000,gid=1
 /** Root-owned: user node can read but not modify the copied workspace. */
 const RESEARCH_TMPFS = `${RESEARCH_WORKDIR}:rw,nosuid,nodev,size=256m,mode=0755`;
 const RESEARCH_SCRATCH_TMPFS = `${RESEARCH_SCRATCH}:rw,nosuid,nodev,size=64m,uid=1000,gid=1000,mode=0755`;
+/** Brownfield dev tasks: read-only (root-owned) copy of the checkpoint source. */
+export const RESEARCH_CODEBASE = '/research/codebase';
+const RESEARCH_CODEBASE_TMPFS = `${RESEARCH_CODEBASE}:rw,nosuid,nodev,noexec,size=768m,mode=0755`;
+/** Not copied into /research/codebase (VCS, dependencies, generated output). */
+export const CODEBASE_EXCLUDES = ['./.git', './node_modules', './vendor', './tmp', './log', './public/packs', './public/packs-test', './public/system', './coverage'] as const;
 
 /** --json-schema of the agentic proposal (extended surface + evidence + expectedSavings). */
 export const AGENTIC_PROPOSAL_JSON_SCHEMA = {
@@ -267,7 +272,7 @@ export const AGENTIC_PROPOSAL_JSON_SCHEMA = {
     files: {
       type: 'object',
       description:
-        'Only the files you change. Keys: "system-prompt.md", "CLAUDE.md", "skills/<name>.md", "bin/<name>" (helper script on the coding agent PATH), "agents/<name>.md" (subagent), "commands/<name>.md" (slash command) — string = full content, null = delete — and "config.json" (a PARTIAL object of approved fields; hooks go in claudeCode.settings.hooks).',
+        'Only the files you change. Keys: "system-prompt.md", "CLAUDE.md", "skills/<name>.md", "bin/<name>" (helper script on the coding agent PATH), "agents/<name>.md" (subagent), "commands/<name>.md" (slash command), "docs/<path>" (reference file at /opt/frugal/docs, not auto-loaded) — string = full content, null = delete — and "config.json" (a PARTIAL object of approved fields; hooks go in claudeCode.settings.hooks).',
       additionalProperties: { anyOf: [{ type: 'string' }, { type: 'object' }, { type: 'null' }] },
     },
   },
@@ -327,7 +332,7 @@ export function buildAgenticEnv(gatewayUrl: string, maxOutputTokens: number): Re
 }
 
 /** `docker run` options of the research container (exported so tests can assert there is no host mount). */
-export function researchSandboxOptions(o: { image: string; imageId?: string; label: string; network: string }): CreateSandboxOptions {
+export function researchSandboxOptions(o: { image: string; imageId?: string; label: string; network: string; codebase?: boolean }): CreateSandboxOptions {
   return {
     image: o.image,
     imageId: o.imageId,
@@ -335,11 +340,11 @@ export function researchSandboxOptions(o: { image: string; imageId?: string; lab
     role: 'coding',
     network: o.network,
     cpus: 2,
-    memory: '2g',
+    memory: o.codebase ? '3g' : '2g',
     pidsLimit: 256,
     tmpSizeMb: 512,
     home: CONTAINER_HOME,
-    extraTmpfs: [RESEARCH_HOME_TMPFS, RESEARCH_TMPFS, RESEARCH_SCRATCH_TMPFS],
+    extraTmpfs: [RESEARCH_HOME_TMPFS, RESEARCH_TMPFS, RESEARCH_SCRATCH_TMPFS, ...(o.codebase ? [RESEARCH_CODEBASE_TMPFS] : [])],
     labels: { 'frugal.component': 'research' },
   };
 }
@@ -371,6 +376,8 @@ export interface OpenResearchSandboxOptions {
   workspaceDir: string;
   gateway: GatewayHandle;
   label: string;
+  /** Dev task (default todo). Brownfield: the task image (its /workspace is the checkpoint) + /research/codebase. */
+  taskId?: string;
 }
 
 /** REAL research sandbox: cc image, per-proposal internal network + forwarder to the host gateway. */
@@ -380,13 +387,22 @@ export async function openResearchSandbox(o: OpenResearchSandboxOptions): Promis
     import('../runner/gateway-network.js'),
     import('../runner/sandbox.js'),
   ]);
-  const cc = await ensureClaudeCodeImage();
+  const brownfield = !!o.taskId && o.taskId !== 'todo';
+  let cc: { image: string; imageId: string; baseImage: string };
+  if (brownfield) {
+    const tasks = await import('../runner/tasks.js');
+    const ti = await tasks.ensureTaskImage(tasks.getTask(o.taskId!));
+    // The forwarder (trusted, `node -e` as user node) always uses the todo benchmark image.
+    cc = { image: ti.image, imageId: ti.imageId, baseImage: (await sbx.ensureImage()).image };
+  } else cc = await ensureClaudeCodeImage();
   const network = await createGatewayNetwork({ runId: o.label, gatewayPort: o.gateway.port, image: cc.baseImage });
   let sandbox: import('../runner/sandbox.js').DockerSandbox | undefined;
   try {
-    sandbox = await sbx.createSandbox(researchSandboxOptions({ image: cc.image, imageId: cc.imageId, label: o.label, network: network.network }));
+    sandbox = await sbx.createSandbox(researchSandboxOptions({ image: cc.image, imageId: cc.imageId, label: o.label, network: network.network, codebase: brownfield }));
     // Root-owned copy: readable, not writable, for user node.
     await sandbox.copyIn(o.workspaceDir, RESEARCH_WORKDIR, { user: 'root', exclude: ['.DS_Store'] });
+    // Brownfield: read-only copy of the checkpoint source (from the image's /workspace, read as node, written as root).
+    if (brownfield) await sandbox.copyWithin('/workspace', RESEARCH_CODEBASE, { fromUser: 'node', toUser: 'root', exclude: [...CODEBASE_EXCLUDES] });
   } catch (e) {
     await sandbox?.destroy().catch(() => undefined);
     await network.destroy();
@@ -603,6 +619,8 @@ export function createAgenticResearchAgent(opts: CreateAgenticResearchAgentOptio
         configsRoot: ctx.configsRoot,
         specDir: ctx.specDir,
         verificationRuns: ctx.verificationRuns,
+        ...(ctx.taskId ? { taskId: ctx.taskId } : {}),
+        ...(ctx.hiddenTaskIds?.length ? { hiddenTaskIds: ctx.hiddenTaskIds } : {}),
         bestConfigId: input.bestConfigId,
         bestConfigFiles: input.bestConfigFiles,
         history: input.history,
@@ -630,7 +648,7 @@ export function createAgenticResearchAgent(opts: CreateAgenticResearchAgentOptio
         });
         const label = `research-${input.experimentId ?? 'proposal'}-${Date.now().toString(36)}`;
         try {
-          session = await deps.openSandbox({ workspaceDir: ws.dir, gateway, label });
+          session = await deps.openSandbox({ workspaceDir: ws.dir, gateway, label, ...(ctx.taskId && ctx.taskId !== 'todo' ? { taskId: ctx.taskId } : {}) });
         } catch (e) {
           throw new ResearchProposalError(`research sandbox failed to start: ${(e as Error)?.message ?? String(e)}`, usage());
         }

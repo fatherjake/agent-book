@@ -21,6 +21,11 @@
  *    hidden scenario goals.
  *  - A final scan rejects (removes) any file that contains a forbidden marker (holdout fixture titles,
  *    evaluator source markers); the builder fails closed if a forbidden PATH is ever produced.
+ *  - Multi-task: only experiments and runs of the dev task (`taskId`) are included, spec/ is the dev
+ *    task's public spec, and every hidden task (a holdout task other than the dev task) adds its id,
+ *    title and paths as forbidden markers. Brownfield dev tasks additionally get a read-only copy of the
+ *    checkpoint source at /research/codebase, made inside the research container from the task image
+ *    (see research-agent-claude-code.ts); it never passes through this host directory.
  */
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -86,6 +91,12 @@ export interface BuildWorkspaceOptions {
   extraForbidden?: string[];
   /** Repo root used to locate evaluator/holdout/fixtures.json for the forbidden-marker scan. */
   repoRoot?: string;
+  /** Dev task (default 'todo'): only its experiments/runs are included; its spec is spec/. */
+  taskId?: string;
+  /** Tasks the research agent must never learn about (e.g. a holdout task); their id/title/paths are forbidden markers. */
+  hiddenTaskIds?: string[];
+  /** Task lookup (tests); default runner/tasks.ts getTask. */
+  getTask?: (id: string) => { id: string; title: string; kind: string; specPath: string };
 }
 
 export interface ResearchWorkspace {
@@ -152,6 +163,16 @@ export function holdoutMarkers(repoRoot = process.cwd()): string[] {
   } catch {
     return [];
   }
+}
+
+/** Forbidden markers of hidden tasks: id, title and their benchmark/evaluator paths. */
+export function hiddenTaskMarkers(tasks: { id: string; title?: string }[]): string[] {
+  const out: string[] = [];
+  for (const t of tasks) {
+    out.push(t.id, `benchmark/tasks/${t.id}`, `evaluator/tasks/${t.id}`);
+    if (t.title && t.title.trim().length >= 8) out.push(t.title.trim());
+  }
+  return out;
 }
 
 export function forbiddenMarkers(repoRoot = process.cwd(), extra: string[] = []): string[] {
@@ -267,7 +288,7 @@ function cheatingOf(db: Db, configId: string): { reason: string; inheritedFrom: 
 
 function outcomeOf(e: ExperimentRow, db: Db): Record<string, unknown> {
   const s = e.summary;
-  const quick = db.listRuns({ experimentId: e.id, phase: 'quick' }).filter((r) => r.suite === 'dev' && r.status !== 'running');
+  const quick = db.listRuns({ experimentId: e.id, phase: 'quick' }).filter((r) => r.suite === 'dev' && r.status !== 'running' && r.taskId === e.taskId);
   return {
     id: e.id,
     kind: e.kind,
@@ -296,10 +317,10 @@ function outcomeOf(e: ExperimentRow, db: Db): Record<string, unknown> {
 }
 
 /** Pick runs: all dev runs of the best config, the latest dev run of each recent experiment, failed runs. */
-export function selectRuns(db: Db, bestConfigId: string, experiments: ExperimentRow[], maxRuns: number): RunRow[] {
+export function selectRuns(db: Db, bestConfigId: string, experiments: ExperimentRow[], maxRuns: number, taskId = 'todo'): RunRow[] {
   const dev = db
-    .listRuns()
-    .filter((r) => r.suite === 'dev' && r.phase !== 'holdout' && r.status !== 'running')
+    .listRuns({ taskId })
+    .filter((r) => r.suite === 'dev' && r.phase !== 'holdout' && r.status !== 'running' && r.taskId === taskId)
     .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)); // newest first
   const picked = new Map<string, RunRow>();
   const add = (r: RunRow | undefined) => {
@@ -311,17 +332,42 @@ export function selectRuns(db: Db, bestConfigId: string, experiments: Experiment
   return [...picked.values()];
 }
 
-function readmeText(o: BuildWorkspaceOptions, ws: { experiments: string[]; runs: { id: string; label: string }[]; notes: string[] }): string {
+/** README sections that differ for a brownfield dev task (todo keeps its original text). */
+function brownfieldText(task: { id: string; title: string }) {
+  return {
+    intro: `You are the research agent of a token-efficiency benchmark. A coding agent (the real Claude Code CLI,
+headless \`claude -p\`, inside an isolated container) implements a feature in a large EXISTING codebase
+(task \`${task.id}\`: ${task.title}), following the public task prompt and feature spec in \`spec/\`. A hidden
+evaluator then checks the result. Your job: study what the coding sessions ACTUALLY did and propose ONE
+configuration change that lowers the coding agent's token use while keeping the checks passing.`,
+    scoring: `- A run passes only if ALL mandatory checks pass: the patch applies, migrations run and the app boots,
+  API checks from the public spec, the upstream feature specs, a regression subset of existing specs, and
+  UI checks.`,
+    codebase: `- \`/research/codebase/\` (read-only, in this container only): the checkpoint source the coding agent starts
+  from (no .git, node_modules or vendor). Use it to build codebase maps and guides for \`docs/\` (feature
+  areas, where routes/controllers/serializers/specs/UI components live, how tests run). Guides must describe the
+  EXISTING code and how to work in it; they must not contain the feature's implementation.
+- \`/workspace\` in this container: a disposable copy of that checkout (dependencies installed, services not
+  necessarily running) for smoke-testing helper scripts.`,
+  };
+}
+
+function readmeText(o: BuildWorkspaceOptions, ws: { experiments: string[]; runs: { id: string; label: string }[]; notes: string[] }, task?: { id: string; title: string; kind: string } | null): string {
   const single = o.experimentIndex <= o.singleVariableExperiments;
   const lim = o.agentLimits ?? {};
   const cc = o.whitelist.backend === 'claude-code';
+  const bf = task && task.kind === 'brownfield' ? brownfieldText(task) : null;
   return `# Research task
 
-You are the research agent of a token-efficiency benchmark. A coding agent (the real Claude Code CLI,
+${
+  bf
+    ? bf.intro
+    : `You are the research agent of a token-efficiency benchmark. A coding agent (the real Claude Code CLI,
 headless \`claude -p\`, inside an isolated container) builds a full-stack todo app (React/Vite + Express +
 better-sqlite3) from a starter repo, following the public spec in \`spec/\`. A hidden evaluator then checks
 the result. Your job: study what the coding sessions ACTUALLY did and propose ONE configuration change that
-lowers the coding agent's token use while keeping every mandatory check passing.
+lowers the coding agent's token use while keeping every mandatory check passing.`
+}
 
 This is candidate experiment #${o.experimentIndex}. The proposal is applied on top of \`best-config/\` (${o.bestConfigId}).
 ${single ? '**Single-variable rule:** change exactly ONE major variable (one prompt/workflow idea, one skill, one script, one hook, one config field). At most 2 files and at most 1 config.json field.' : 'You may combine several changes if the evidence supports them; keep the proposal coherent and explainable.'}
@@ -329,8 +375,12 @@ ${single ? '**Single-variable rule:** change exactly ONE major variable (one pro
 ## How scoring works
 
 - Each candidate gets 1 quick run; if it passes, ${o.verificationRuns ?? 5} verification runs.
-- A run passes only if ALL mandatory checks pass: build + start, API contract tests, browser scenarios,
-  persistence, and visual similarity to the reference design >= 95 (out of 100).
+${
+  bf
+    ? bf.scoring
+    : `- A run passes only if ALL mandatory checks pass: build + start, API contract tests, browser scenarios,
+  persistence, and visual similarity to the reference design >= 95 (out of 100).`
+}
 - Promotion: every verification run passes AND the MEDIAN coding tokens over the verification runs is
   lower than the current best's median. Coding tokens = input + output + cache read + cache write of
   EVERY model call the coding agent makes (main turns, subagents, background calls, compaction).
@@ -360,8 +410,13 @@ ${single ? '**Single-variable rule:** change exactly ONE major variable (one pro
   - \`run.json\`: totals, status, limits. \`eval-summary.json\`: pass/fail per DEV check id, short messages
     for non-browser checks, visual score.
 ${ws.runs.map((r) => `  - \`runs/${r.id}\`: ${r.label}`).join('\n') || '  - (no runs available yet)'}
-- \`spec/\`: the public spec the coding agent receives (requirements.md, api-contract.yaml, design-tokens.md,
-  fixtures.json, design.png, design-mobile.png).
+${
+  bf
+    ? `- \`spec/\`: the public task prompt (prompt.md) and feature spec the coding agent receives.
+${bf.codebase}`
+    : `- \`spec/\`: the public spec the coding agent receives (requirements.md, api-contract.yaml, design-tokens.md,
+  fixtures.json, design.png, design-mobile.png).`
+}
 - \`scratch/\`: your ONLY writable directory (notes, analysis scripts, test copies of helper scripts).
 
 Useful one-liners (node and jq-free shell are available; write small node scripts in scratch/):
@@ -439,6 +494,16 @@ export async function buildResearchWorkspace(o: BuildWorkspaceOptions): Promise<
   const cleanup = () => rmSync(dir, { recursive: true, force: true });
   const notes: string[] = [];
   let bytes = 0;
+  const taskId = o.taskId ?? 'todo';
+  const lookup = o.getTask ?? (taskId === 'todo' && !o.hiddenTaskIds?.length ? null : (await import('../runner/tasks.js')).getTask);
+  const task = taskId === 'todo' && !o.getTask ? null : lookup!(taskId);
+  const hidden = (o.hiddenTaskIds ?? []).filter((id) => id !== taskId).map((id) => {
+    try {
+      return lookup!(id);
+    } catch {
+      return { id, title: '' };
+    }
+  });
 
   try {
     bytes += writeText(dir, 'digest.md', `# Experiment history digest\n\n${o.history.trim()}\n`);
@@ -446,7 +511,7 @@ export async function buildResearchWorkspace(o: BuildWorkspaceOptions): Promise<
     for (const [rel, content] of Object.entries(o.bestConfigFiles)) bytes += writeText(dir, join('best-config', rel), content);
 
     // experiments/
-    const all = o.db.listExperiments().filter((e) => e.status !== 'pending');
+    const all = o.db.listExperiments({ taskId }).filter((e) => e.status !== 'pending' && e.taskId === taskId);
     const recent = all.slice(-limits.maxExperiments);
     const expIds: string[] = [];
     for (const e of recent) {
@@ -493,8 +558,8 @@ export async function buildResearchWorkspace(o: BuildWorkspaceOptions): Promise<
     const runIds: string[] = [];
     const runLabels: { id: string; label: string }[] = [];
     let runBytes = 0;
-    for (const run of selectRuns(o.db, o.bestConfigId, recent, limits.maxRuns)) {
-      if (run.suite !== 'dev' || run.phase === 'holdout') continue; // defense in depth
+    for (const run of selectRuns(o.db, o.bestConfigId, recent, limits.maxRuns, taskId)) {
+      if (run.suite !== 'dev' || run.phase === 'holdout' || run.taskId !== taskId) continue; // defense in depth
       const src = join(o.resultsDir, 'runs', run.runId);
       if (!existsSync(src)) {
         notes.push(`run ${run.runId}: run directory missing`);
@@ -541,7 +606,7 @@ export async function buildResearchWorkspace(o: BuildWorkspaceOptions): Promise<
     bytes += runBytes;
 
     // spec/
-    const specDir = o.specDir ?? resolve('benchmark', 'spec');
+    const specDir = o.specDir ?? (task && taskId !== 'todo' ? task.specPath : resolve('benchmark', 'spec'));
     if (existsSync(specDir)) {
       for (const name of readdirSync(specDir).sort()) {
         const p = join(specDir, name);
@@ -550,9 +615,15 @@ export async function buildResearchWorkspace(o: BuildWorkspaceOptions): Promise<
         bytes += statSync(p).size;
       }
     } else notes.push('spec/ not available');
+    // Brownfield: the task prompt is public too (prompt.md next to the spec files).
+    const promptPath = task && taskId !== 'todo' ? join((task as { dir?: string }).dir ?? '', 'prompt.md') : null;
+    if (promptPath && existsSync(promptPath) && !existsSync(join(dir, 'spec', 'prompt.md'))) {
+      copyFileSync(promptPath, join(mkdirSyncP(join(dir, 'spec')), 'prompt.md'));
+      bytes += statSync(promptPath).size;
+    }
 
     // Final scan: forbidden paths fail closed; forbidden content removes the offending file.
-    const markers = forbiddenMarkers(o.repoRoot, o.extraForbidden);
+    const markers = forbiddenMarkers(o.repoRoot, [...(o.extraForbidden ?? []), ...hiddenTaskMarkers(hidden), ...(taskId !== 'todo' ? ['evaluator/tasks/'] : [])]);
     const scan = scanWorkspace(dir, markers);
     if (scan.forbiddenPaths.length) throw new Error(`research workspace contains forbidden paths: ${scan.forbiddenPaths.join(', ')}`);
     for (const f of scan.forbiddenContent) {
@@ -561,7 +632,7 @@ export async function buildResearchWorkspace(o: BuildWorkspaceOptions): Promise<
       notes.push(`${f.path}: removed (contained hidden-evaluator material)`);
     }
 
-    bytes += writeText(dir, 'README.md', readmeText(o, { experiments: expIds, runs: runLabels, notes }));
+    bytes += writeText(dir, 'README.md', readmeText(o, { experiments: expIds, runs: runLabels, notes }, task && taskId !== 'todo' ? task : null));
     // README itself is generated from trusted text, but re-scan it too.
     const again = scanWorkspace(dir, markers);
     if (again.forbiddenPaths.length || again.forbiddenContent.length)

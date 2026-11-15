@@ -1,5 +1,5 @@
 /**
- * npm run benchmark -- [--config baseline] [--runs N] [--suite dev|holdout] [--provider mock|anthropic]
+ * npm run benchmark -- [--config baseline] [--task todo] [--runs N] [--suite dev|holdout] [--provider mock|anthropic]
  *                      [--mock-script default|reference-app] [--skip-browser-agent] [--dry-run]
  *
  * Runs a coding-agent configuration against the benchmark (sequentially), evaluates every app
@@ -16,9 +16,10 @@ import { MOCK_SCRIPT_NAMES } from '../researcher/mock-scripts.js';
 
 export const BENCHMARK_CLI: CommandSpec = {
   command: 'npm run benchmark --',
-  summary: 'Run a coding-agent configuration against the todo-app benchmark and evaluate the result.',
+  summary: 'Run a coding-agent configuration against a benchmark task (default: the todo app) and evaluate the result.',
   flags: [
     { name: 'config', type: 'string', description: "Config id under configs/ ('baseline' or 'experiments/NNN')", default: 'baseline' },
+    { name: 'task', type: 'string', description: 'Benchmark task id (benchmark/tasks/<id>, e.g. todo, mastodon-bookmarks)', default: 'todo' },
     { name: 'runs', type: 'number', description: 'Number of runs', default: 1, integer: true, min: 1 },
     { name: 'concurrency', type: 'number', description: 'Runs executed in parallel (each fully isolated)', default: 1, integer: true, min: 1 },
     { name: 'suite', type: 'string', description: 'Evaluation suite', default: 'dev', choices: ['dev', 'holdout'] },
@@ -41,6 +42,7 @@ export const BENCHMARK_CLI: CommandSpec = {
   examples: [
     'npm run benchmark -- --config baseline',
     'npm run benchmark -- --config experiments/001 --runs 3',
+    'npm run benchmark -- --task mastodon-bookmarks --config baseline',
     'npm run benchmark -- --dry-run',
     'npm run benchmark -- --provider mock                              # infra test, trivial file',
     'npm run benchmark -- --provider mock --mock-script reference-app  # infra test, full pipeline',
@@ -227,11 +229,24 @@ async function main(): Promise<void> {
       import('../evaluator/app-launcher.js'),
     ]);
   const cfg = loadConfig(configId);
+  const taskId = String(args.task ?? 'todo');
+  const { getTask } = await import('../runner/tasks.js');
+  let task;
+  try {
+    task = getTask(taskId);
+  } catch (e) {
+    console.error(`error: ${(e as Error).message}`);
+    process.exit(2);
+  }
   const effectiveProvider = provider ?? cfg.provider;
   const isMock = effectiveProvider === 'mock';
   const mockScriptName = args['mock-script'] as string | undefined;
   if (mockScriptName && !isMock) {
     console.error('error: --mock-script requires --provider mock (it is an infrastructure-test option).');
+    process.exit(2);
+  }
+  if (mockScriptName === 'reference-app' && taskId !== 'todo') {
+    console.error("error: --mock-script reference-app pushes the todo reference app; it only works with --task todo.");
     process.exit(2);
   }
   let skipBrowserAgent = Boolean(args['skip-browser-agent']);
@@ -279,7 +294,7 @@ async function main(): Promise<void> {
   process.on('SIGTERM', onSig);
 
   console.log(
-    `Running ${args.runs} run(s) of '${configId}' (${!isMock && cfg.backend === 'claude-code' ? 'claude-code' : effectiveProvider}/${cfg.model}, suite ${args.suite})${flagTags(isMock, skipBrowserAgent)}`,
+    `Running ${args.runs} run(s) of '${configId}' on task '${taskId}' (${!isMock && cfg.backend === 'claude-code' ? 'claude-code' : effectiveProvider}/${cfg.model}, suite ${args.suite})${flagTags(isMock, skipBrowserAgent && task.browserAgent === 'required')}`,
   );
   if (isMock) {
     console.log(`${MOCK} The mock provider makes no real model calls. These results are NOT a real benchmark.`);
@@ -293,15 +308,17 @@ async function main(): Promise<void> {
     candidateConfigId: configId,
     hypothesis: isMock
       ? `${MOCK} Infrastructure test (mock script '${mockScriptName ?? 'default'}'): npm run benchmark --config ${configId}`
-      : `Manual benchmark: npm run benchmark --config ${configId} --runs ${args.runs} --suite ${args.suite}`,
+      : `Manual benchmark: npm run benchmark --config ${configId}${taskId === 'todo' ? '' : ` --task ${taskId}`} --runs ${args.runs} --suite ${args.suite}`,
     changeSummary: null,
     provider: effectiveProvider,
     model: cfg.model,
     isMock,
     status: 'running',
+    taskId,
   });
   const results = await runBenchmark({
     configId,
+    taskId,
     experimentId: exp.id,
     runs: args.runs as number,
     concurrency: args.concurrency as number,
@@ -338,7 +355,7 @@ async function main(): Promise<void> {
     ];
   });
   console.log('\n' + textTable(['run', 'status', 'eval', 'passed', 'coding tokens', 'API-equiv cost', 'visual', 'tools', 'time', 'notes'], rows));
-  const s = summarize(results, configId);
+  const s = summarize(results, configId, { minPassRate: task.minPassRate, taskId });
   db.updateExperiment(exp.id, {
     summary: { ...s, phase: args.suite === 'holdout' ? 'holdout' : 'manual' },
     isMock: isMock || !!s.usedMockProvider,
@@ -352,7 +369,7 @@ async function main(): Promise<void> {
   const why = [
     s.usedMockProvider ? `${MOCK} mock provider` : '',
     s.browserAgentSkipped ? `${NO_BROWSER} browser agent skipped` : '',
-    s.passes < s.runs ? `${s.runs - s.passes} run(s) failed` : '',
+    s.passes < s.runs ? `${s.runs - s.passes} run(s) failed${task.minPassRate < 1 ? ` (task minPassRate ${task.minPassRate})` : ''}` : '',
   ].filter(Boolean);
   console.log(`  experiment: ${exp.id} (npm run results -- --experiment ${exp.id})`);
   console.log(`  meets quality requirements / eligible for promotion: ${s.meetsQualityRequirements ? 'yes' : `no (${why.join('; ') || 'no runs'})`}`);

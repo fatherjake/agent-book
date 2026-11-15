@@ -109,7 +109,7 @@ export function makeFakeBench(db: Db, plan: Plan, hooks: { onRun?: (o: RunBenchm
       const evaluation = fakeEval({ runId, passed: p.passed, suite: o.suite ?? 'dev', checks: p.checks, browserAgentSkipped: p.noBrowser ?? o.skipBrowserAgent });
       const passed = p.passed;
       if (o.db) {
-        o.db.insertRunStart({ runId, experimentId: o.experimentId, configId: o.configId, seed: 1, phase, suite: o.suite ?? 'dev', usedMockProvider: coding.usedMockProvider });
+        o.db.insertRunStart({ runId, experimentId: o.experimentId, configId: o.configId, seed: 1, phase, suite: o.suite ?? 'dev', usedMockProvider: coding.usedMockProvider, taskId: o.taskId });
         o.db.finishRun(runId, coding, passed);
         o.db.insertEvaluation(evaluation);
       }

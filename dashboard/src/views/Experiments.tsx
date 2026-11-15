@@ -8,6 +8,7 @@ type Key = keyof ExperimentRow;
 
 const COLUMNS: { key: Key; label: string; num?: boolean }[] = [
   { key: 'id', label: 'Experiment' },
+  { key: 'taskId', label: 'Task' },
   { key: 'createdAt', label: 'Created' },
   { key: 'model', label: 'Model' },
   { key: 'configId', label: 'Config' },
@@ -33,12 +34,15 @@ export function ExperimentsSection() {
   const state = useApi<{ experiments: ExperimentRow[] }>('/api/experiments');
   const [sort, setSort] = useState<{ key: Key; dir: 1 | -1 }>({ key: 'createdAt', dir: -1 });
   const [filter, setFilter] = useState('');
+  const [task, setTask] = useState('');
+
+  const tasks = useMemo(() => [...new Set((state.data?.experiments ?? []).map((r) => r.taskId ?? 'todo'))].sort((a, b) => (a === 'todo' ? -1 : b === 'todo' ? 1 : a.localeCompare(b))), [state.data]);
 
   const rows = useMemo(() => {
-    const list = state.data?.experiments ?? [];
+    const list = (state.data?.experiments ?? []).filter((r) => !task || (r.taskId ?? 'todo') === task);
     const f = filter.trim().toLowerCase();
     const filtered = f
-      ? list.filter((r) => [r.id, r.model, r.configId, r.outcome, r.hypothesis].some((v) => v && String(v).toLowerCase().includes(f)))
+      ? list.filter((r) => [r.id, r.taskId, r.model, r.configId, r.outcome, r.hypothesis].some((v) => v && String(v).toLowerCase().includes(f)))
       : list;
     return [...filtered].sort((a, b) => {
       const c = compare(a[sort.key], b[sort.key]);
@@ -46,7 +50,7 @@ export function ExperimentsSection() {
       if (a[sort.key] == null || b[sort.key] == null) return c;
       return c * sort.dir;
     });
-  }, [state.data, sort, filter]);
+  }, [state.data, sort, filter, task]);
 
   const clickHeader = (key: Key) => setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: 1 }));
 
@@ -60,7 +64,15 @@ export function ExperimentsSection() {
         </p>
       </div>
       <div className="ds-filters">
-        <input className="ds-input" style={{ flex: '1 1 260px' }} placeholder="Filter by id, model, config, outcome, hypothesis…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <select className="ds-select" aria-label="Task" value={task} onChange={(e) => setTask(e.target.value)}>
+          <option value="">All tasks</option>
+          {tasks.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+        <input className="ds-input" style={{ flex: '1 1 260px' }} placeholder="Filter by id, task, model, config, outcome, hypothesis…" value={filter} onChange={(e) => setFilter(e.target.value)} />
       </div>
       <LoadState state={state}>
         {() =>
@@ -98,6 +110,7 @@ export function ExperimentsSection() {
                           </span>
                         )}
                       </td>
+                      <td className="mono dim nowrap">{r.taskId ?? 'todo'}</td>
                       <td className="num dim nowrap">
                         <Ago iso={r.createdAt} />
                       </td>
@@ -126,8 +139,8 @@ export function ExperimentsSection() {
         }
       </LoadState>
       <p className="ds-note">
-        Tokens are the median coding-agent tokens across an experiment's runs. "vs best" is the saving against the current best verified median:
-        positive means fewer tokens than the best. Mock rows compare against the mock best.
+        Tokens are the median coding-agent tokens across an experiment's runs. "vs best" is the saving against the current best verified median
+        of the experiment's own task (bests are per task): positive means fewer tokens than the best. Mock rows compare against the mock best.
       </p>
     </section>
   );

@@ -136,6 +136,8 @@ export interface TrackerContext {
   role: AgentRole;
   runId?: string;
   experimentId?: string;
+  /** Task of the run (multi-task benchmark); recorded on every record when set. */
+  taskId?: string;
   /** Append every record as one JSON line to this file. */
   usageFile?: string;
   /** Observer, e.g. for writing to SQLite. Errors are swallowed. */
@@ -169,6 +171,7 @@ export class TokenTracker {
       role: this.ctx.role,
       runId: this.ctx.runId,
       experimentId: this.ctx.experimentId,
+      ...(this.ctx.taskId ? { taskId: this.ctx.taskId } : {}),
       provider: usage.provider,
       model: usage.model,
       timestamp: new Date().toISOString(),

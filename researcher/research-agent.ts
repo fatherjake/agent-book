@@ -30,9 +30,13 @@ export interface ResearchContext {
   db: Db;
   resultsDir: string;
   configsRoot: string;
-  /** Public benchmark spec (default benchmark/spec). */
+  /** Public benchmark spec (default: the dev task's spec; todo: benchmark/spec). */
   specDir?: string;
   verificationRuns?: number;
+  /** Dev task of the research loop (default 'todo'). */
+  taskId?: string;
+  /** Tasks the research agent must never see (a holdout task other than the dev task). */
+  hiddenTaskIds?: string[];
 }
 
 export interface ResearchAgentInput {

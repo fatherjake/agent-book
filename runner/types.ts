@@ -17,6 +17,8 @@ export interface UsageRecord {
   role: AgentRole;
   runId?: string;
   experimentId?: string;
+  /** (multi-task addition) Task of the coding run (coding role); absent = 'todo'. */
+  taskId?: string;
   provider: string; // 'anthropic' | 'mock' | ...
   model: string;
   timestamp: string; // ISO
@@ -205,6 +207,12 @@ export interface AgentConfig {
   agents?: { name: string; content: string }[];
   /** (config-surface addition, claude-code only) Slash commands from commands/<name>.md → ~/.claude/commands/. */
   commands?: { name: string; content: string }[];
+  /**
+   * (multi-task addition, claude-code only) Reference docs from docs/<path> (any text files, nested up to 3
+   * levels). Installed root-owned and read-only at /opt/frugal/docs/<path>; NOT loaded into context unless
+   * the agent reads them. Absent when the config has no docs/ files (existing hashes unchanged).
+   */
+  docs?: { path: string; content: string }[];
 }
 
 export type AgentBackend = 'api' | 'claude-code';
@@ -281,6 +289,8 @@ export interface CodingRunResult {
     traceFile: string; // trace.jsonl
     usageFile: string; // usage.jsonl (raw UsageRecords)
     configSnapshotDir: string;
+    /** (multi-task addition) git-diff tasks: results/runs/<runId>/workspace.patch (appSnapshotDir is then unused). */
+    workspacePatch?: string;
   };
   usedMockProvider: boolean;
   /** (runner addition) Limits actually enforced: min(config.limits, limitsOverride) per field. */
@@ -305,6 +315,8 @@ export interface CodingRunResult {
   };
   /** (config-guard addition) Runtime anti-cheating audit of a claude-code run (see researcher/config-guard.ts). */
   configAudit?: ConfigRunAudit;
+  /** (multi-task addition) Benchmark task of the run (docs/TASKS.md). Absent = 'todo'. */
+  taskId?: string;
 }
 
 /** One invocation of a config bin script inside the coding container (written by the audit wrapper). */

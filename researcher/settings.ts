@@ -2,6 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import type { Effort } from '../runner/types.js';
 import type { ResearchBudgets } from '../storage/db.js';
+import { getTask, TASK_ID_RE } from '../runner/tasks.js';
 
 export const DEFAULT_RESEARCH_SETTINGS_PATH = 'configs/research.json';
 
@@ -58,6 +59,17 @@ export interface ResearchSettings extends ResearchBudgets {
   usageLimitMarginSec: number;
   /** Wait used when the gateway saw a usage limit but reported no reset time. */
   usageLimitUnknownResetWaitSec: number;
+  /**
+   * Benchmark task the research optimizes (quick + verification runs, baseline, best, promotion are per dev
+   * task). Default 'todo'.
+   */
+  devTask: string;
+  /**
+   * Task of the holdout check on promotion. Equal to devTask (the default when not set) = the old behaviour
+   * (the dev task's holdout suite). A different task (e.g. mastodon-filters for dev task mastodon-bookmarks) is never
+   * shown to the research agent: only one pass/fail bit per promoted experiment.
+   */
+  holdoutTask: string;
 }
 
 /** Providers that run on the Claude subscription via Claude Code (no per-token billing). */
@@ -104,6 +116,8 @@ export const DEFAULT_RESEARCH_SETTINGS: ResearchSettings = {
   maxUsageLimitWaitSec: 6 * 3600,
   usageLimitMarginSec: 120,
   usageLimitUnknownResetWaitSec: 15 * 60,
+  devTask: 'todo',
+  holdoutTask: 'todo',
 };
 
 export function validateSettings(s: ResearchSettings): string[] {
@@ -148,6 +162,7 @@ export function validateSettings(s: ResearchSettings): string[] {
   if (!w || ![w.maxExperiments, w.maxRuns, w.maxRunMB].every((n) => Number.isInteger(n) && n >= 1))
     errs.push('researchWorkspace must be {maxExperiments, maxRuns, maxRunMB} (integers >= 1)');
   if (!(RESEARCH_PROVIDERS as readonly string[]).includes(s.researchProvider)) errs.push(`researchProvider must be one of ${RESEARCH_PROVIDERS.join(', ')}`);
+  for (const k of ['devTask', 'holdoutTask'] as const) if (typeof s[k] !== 'string' || !TASK_ID_RE.test(s[k])) errs.push(`${k} must be a task id (benchmark/tasks/<id>)`);
   return errs;
 }
 
@@ -166,9 +181,21 @@ export function loadResearchSettings(path: string = DEFAULT_RESEARCH_SETTINGS_PA
     holdout: { ...DEFAULT_RESEARCH_SETTINGS.holdout, ...(fromFile.holdout ?? {}), ...(overrides.holdout ?? {}) },
     researchWorkspace: { ...DEFAULT_RESEARCH_SETTINGS.researchWorkspace, ...(fromFile.researchWorkspace ?? {}), ...(overrides.researchWorkspace ?? {}) },
   };
+  // holdoutTask not given anywhere: holdout on the dev task itself (its holdout suite), as before.
+  if (fromFile.holdoutTask === undefined && overrides.holdoutTask === undefined) s.holdoutTask = s.devTask;
   // Precedence: explicit override > RESEARCH_MODEL env > file > default.
   if (process.env.RESEARCH_MODEL && !overrides.researchModel) s.researchModel = process.env.RESEARCH_MODEL;
   const errs = validateSettings(s);
+  if (!errs.length) {
+    // The tasks must exist in the registry (benchmark/tasks/<id>/task.json).
+    for (const k of ['devTask', 'holdoutTask'] as const) {
+      try {
+        getTask(s[k]);
+      } catch (e) {
+        errs.push(`${k}: ${(e as Error).message}`);
+      }
+    }
+  }
   if (errs.length) throw new Error(`invalid research settings (${path}): ${errs.join('; ')}`);
   return s;
 }
