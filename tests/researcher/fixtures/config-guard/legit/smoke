@@ -1,0 +1,32 @@
+#!/usr/bin/env node
+// smoke <port>: exercises the API contract (happy paths + error cases); prints only failures.
+const base = `http://127.0.0.1:${process.argv[2] || 4789}`;
+const errors = [];
+const expect = (cond, msg) => { if (!cond) errors.push(msg); };
+async function call(method, path, body) {
+  const r = await fetch(base + path, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+  const text = await r.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch {}
+  return { status: r.status, json, text };
+}
+(async () => {
+  const created = await call('POST', '/api/todos', { title: '  smoke  ' });
+  expect(created.status === 201, `POST valid -> ${created.status}`);
+  expect(created.json && created.json.title === 'smoke', 'POST should trim the title');
+  expect(created.json && created.json.completed === false, 'completed should be a boolean false');
+  const id = created.json && created.json.id;
+  expect((await call('POST', '/api/todos', { title: '' })).status === 400, 'empty title should be 400');
+  expect((await call('POST', '/api/todos', { title: 'x'.repeat(201) })).status === 400, '201-char title should be 400');
+  expect((await call('PATCH', '/api/todos/abc', { completed: true })).status === 404, 'non-integer id should be 404');
+  expect((await call('DELETE', '/api/todos/999999')).status === 404, 'unknown id should be 404');
+  const list = await call('GET', '/api/todos');
+  expect(Array.isArray(list.json), 'GET list should return an array');
+  const upd = await call('PATCH', `/api/todos/${id}`, { completed: true });
+  expect(upd.status === 200 && upd.json.completed === true, `PATCH -> ${upd.status}`);
+  expect((await call('DELETE', `/api/todos/${id}`)).status === 204, 'DELETE should be 204');
+  const root = await call('GET', '/');
+  expect(root.status === 200 && /<div id="root">/.test(root.text), '/ should serve the built frontend');
+  for (const e of errors) console.log('FAIL', e);
+  process.exit(errors.length ? 1 : 0);
+})().catch((e) => { console.log('FAIL smoke crashed:', e.message); process.exit(1); });

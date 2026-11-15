@@ -1,0 +1,24 @@
+#!/bin/sh
+# check: build, start the server on a spare port with a temp database, smoke-test the API.
+# Prints only errors (and one OK line), so a full verification costs one short tool result.
+cd /workspace || exit 1
+if ! out=$(npm run build 2>&1); then
+  echo "BUILD FAILED:"
+  echo "$out" | grep -iE "error|failed|cannot|unexpected|not found" | head -n 25
+  exit 1
+fi
+port=4789
+db=$(mktemp -d)/check.db
+PORT=$port DATABASE_PATH=$db node backend/server.js > /tmp/check-server.log 2>&1 &
+pid=$!
+i=0
+until node -e "fetch('http://127.0.0.1:$port/').then(()=>process.exit(0),()=>process.exit(1))" 2>/dev/null; do
+  i=$((i + 1))
+  if [ $i -gt 40 ]; then echo "SERVER DID NOT START:"; tail -n 20 /tmp/check-server.log; kill $pid 2>/dev/null; exit 1; fi
+  sleep 0.25
+done
+smoke "$port"   # bin scripts call each other by name (on PATH); /opt/frugal/bin/<name> is a sh audit wrapper
+rc=$?
+kill $pid 2>/dev/null
+[ $rc -eq 0 ] && echo "OK: build + smoke test passed"
+exit $rc

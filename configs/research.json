@@ -1,0 +1,41 @@
+{
+  "$comment": "Research loop settings. CLI flags of `npm run research` override these. limits/provider of coding configs, the evaluator, thresholds and token accounting are NOT configurable by the research agent. Budgets: maxTotalTokens (all roles) / maxCodingTokens (null = no cap); maxResearchCostUsd is an API-EQUIVALENT cost from the local price table (null = off; nothing is billed per token on a Claude subscription). Subscription usage limits: the loop waits up to maxUsageLimitWaitSec for the reset (+usageLimitMarginSec), then retries; waiting is not counted against maxTotalDurationSec. researchMode: \"agentic\" (default) runs the research agent in a sandbox container (Read/Grep/Glob/Bash, Write only to /research/scratch) over a workspace of past coding sessions (profiles, transcripts, usage), capped by researchMaxRuntimeSec and researchMaxTotalTokens per proposal; \"simple\" is the old single no-tools host call. researchModel may be claude-opus-5-5 when analysis quality matters.",
+  "researchProvider": "claude-code",
+  "researchModel": "claude-sonnet-5-5",
+  "researchEffort": "high",
+  "researchMaxOutputTokens": 16000,
+  "researchMode": "agentic",
+  "researchMaxRuntimeSec": 900,
+  "researchMaxTotalTokens": 1500000,
+  "researchWorkspace": {
+    "maxExperiments": 10,
+    "maxRuns": 12,
+    "maxRunMB": 40
+  },
+  "codingProvider": null,
+  "maxExperiments": 20,
+  "maxTotalTokens": null,
+  "maxCodingTokens": null,
+  "maxResearchCostUsd": null,
+  "maxTokensPerCodingRun": 3000000,
+  "maxRuntimePerExperimentSec": 14400,
+  "maxTotalDurationSec": 86400,
+  "verificationRuns": 5,
+  "quickRuns": 1,
+  "noiseMarginPct": 0,
+  "quickRunMaxTokenRatio": 1.5,
+  "singleVariableExperiments": 8,
+  "allowModelChange": false,
+  "allowedModels": [],
+  "holdout": {
+    "onPromotion": true,
+    "runs": 1
+  },
+  "pausePollSec": 5,
+  "historyMaxExperiments": 40,
+  "maxConsecutiveProposalFailures": 3,
+  "skipBrowserAgent": false,
+  "maxUsageLimitWaitSec": 21600,
+  "usageLimitMarginSec": 120,
+  "usageLimitUnknownResetWaitSec": 900
+}

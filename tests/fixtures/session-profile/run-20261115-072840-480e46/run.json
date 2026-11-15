@@ -1,0 +1,57 @@
+{
+  "runId": "run-20261115-072840-480e46",
+  "experimentId": "exp-0001",
+  "configId": "baseline",
+  "seed": 964336681,
+  "status": "completed",
+  "startedAt": "2026-11-15T07:28:40.218Z",
+  "finishedAt": "2026-11-15T07:29:25.739Z",
+  "durationMs": 45521,
+  "imageId": "sha256:3c8463636e7dc0100d259adf356d266baa0c80d1a79ba75a4770d7a3310ffed4",
+  "starterHash": "20f33f4110069178ee56eda83814abe60e71044a7a28e74eadbdfbb632a37e20",
+  "configHash": "bd7fdb6d211f1171aaa9c3aaf7e36ccb7167facffc4b31d8a667c903e7d004bd",
+  "usage": {
+    "inputTokens": 10,
+    "outputTokens": 7032,
+    "reasoningTokens": 0,
+    "cacheReadTokens": 131229,
+    "cacheWriteTokens": 23275,
+    "totalTokens": 161546,
+    "costUsd": 0.1765629,
+    "modelCalls": 5,
+    "anyEstimated": false,
+    "costEstimated": true
+  },
+  "toolCalls": 5,
+  "artifacts": {
+    "appSnapshotDir": "results/runs/run-20261115-072840-480e46/app",
+    "traceFile": "results/runs/run-20261115-072840-480e46/trace.jsonl",
+    "usageFile": "results/runs/run-20261115-072840-480e46/usage.jsonl",
+    "configSnapshotDir": "results/runs/run-20261115-072840-480e46/config"
+  },
+  "usedMockProvider": false,
+  "effectiveLimits": {
+    "maxTotalTokens": 3000000,
+    "maxModelCalls": 150,
+    "maxRuntimeSec": 2400
+  },
+  "backend": "claude-code",
+  "usageCrossCheck": {
+    "gateway": {
+      "inputTokens": 10,
+      "outputTokens": 7032,
+      "cacheReadTokens": 131229,
+      "cacheWriteTokens": 23275,
+      "totalTokens": 161546,
+      "modelCalls": 5
+    },
+    "stream": {
+      "inputTokens": 10,
+      "outputTokens": 7032,
+      "cacheReadTokens": 131229,
+      "cacheWriteTokens": 23275,
+      "totalTokens": 161546
+    },
+    "match": true
+  }
+}

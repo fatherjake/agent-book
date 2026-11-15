@@ -1,0 +1,11 @@
+#!/usr/bin/env node
+// PreToolUse hook: pipes noisy commands (seq, npm build/test) through `clip` so long output (success
+// or failure) is head/tail-trimmed before it reaches the model; the exit code is preserved.
+let d = '';
+process.stdin.on('data', (c) => (d += c)).on('end', () => {
+  const i = JSON.parse(d || '{}');
+  const cmd = i.tool_input && i.tool_input.command;
+  if (typeof cmd !== 'string' || !/\b(seq|npm (run )?(build|test))\b/.test(cmd) || /&\s*$|<</.test(cmd) || i.tool_input.run_in_background) return;
+  const wrapped = `{ ${cmd}\n} 2>&1 | clip 1200; exit \${PIPESTATUS[0]}`;
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...i.tool_input, command: wrapped } } }));
+});
