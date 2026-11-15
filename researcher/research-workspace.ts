@@ -260,6 +260,11 @@ export function evalSummary(db: Db, run: RunRow): Record<string, unknown> | null
   };
 }
 
+function cheatingOf(db: Db, configId: string): { reason: string; inheritedFrom: string | null } | null {
+  const c = db.cheatingStatus(configId);
+  return c ? { reason: c.reason, inheritedFrom: c.inherited ? c.flaggedConfigId : null } : null;
+}
+
 function outcomeOf(e: ExperimentRow, db: Db): Record<string, unknown> {
   const s = e.summary;
   const quick = db.listRuns({ experimentId: e.id, phase: 'quick' }).filter((r) => r.suite === 'dev' && r.status !== 'running');
@@ -283,6 +288,8 @@ function outcomeOf(e: ExperimentRow, db: Db): Record<string, unknown> {
       : null,
     // Holdout: ONE bit, never details.
     holdoutPassed: e.holdoutPassed,
+    // Human verdict: this technique is cheating (not a real token saving). Never reuse it.
+    cheating: e.candidateConfigId ? cheatingOf(db, e.candidateConfigId) : null,
     notes: short(e.notes, 400),
     error: short(e.error, 400),
   };
@@ -330,6 +337,10 @@ ${single ? '**Single-variable rule:** change exactly ONE major variable (one pro
 - Run-to-run noise is about 30% (the same config produced 124k and 162k). Do not overinterpret one run;
   prefer changes whose mechanism removes tokens on every call or removes whole calls.
 - A config that saves tokens but fails a check is worthless.
+- A human reviews results. Configs that save tokens by gaming the benchmark (shipping app code, copying
+  a past solution, weakening what is built or checked, exploiting the evaluator) are FLAGGED AS CHEATING:
+  they are rejected, dropped from best, and so is every config derived from them. Flagged experiments
+  are marked in \`digest.md\` and \`outcome.json\` (\`cheating\`); never reuse their technique.
 
 ## Files
 

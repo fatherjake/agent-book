@@ -255,6 +255,21 @@ const MIGRATIONS: string[] = [
   CREATE TRIGGER no_delete_usage_limit_waits BEFORE DELETE ON usage_limit_waits BEGIN SELECT RAISE(ABORT, 'append-only: usage_limit_waits'); END;
   CREATE TRIGGER no_update_usage_limit_waits BEFORE UPDATE ON usage_limit_waits BEGIN SELECT RAISE(ABORT, 'immutable: usage_limit_waits'); END;
   `,
+  /* v4: human (or guard) verdicts that a config cheats. Append-only: the newest row per config wins ('cleared' undoes). */ `
+  CREATE TABLE flags (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    config_id     TEXT NOT NULL,
+    experiment_id TEXT,
+    run_id        TEXT,
+    kind          TEXT NOT NULL CHECK (kind IN ('cheating', 'cleared')),
+    reason        TEXT NOT NULL,
+    source        TEXT NOT NULL DEFAULT 'human',
+    created_at    TEXT NOT NULL
+  );
+  CREATE INDEX idx_flags_config ON flags(config_id);
+  CREATE TRIGGER no_delete_flags BEFORE DELETE ON flags BEGIN SELECT RAISE(ABORT, 'append-only: flags'); END;
+  CREATE TRIGGER no_update_flags BEFORE UPDATE ON flags BEGIN SELECT RAISE(ABORT, 'immutable: flags'); END;
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
@@ -455,6 +470,30 @@ export interface ArtifactRow {
   createdAt: string;
 }
 
+export type FlagKind = 'cheating' | 'cleared';
+
+export interface FlagRow {
+  id: number;
+  configId: string;
+  experimentId: string | null;
+  runId: string | null;
+  kind: FlagKind;
+  reason: string;
+  source: string;
+  createdAt: string;
+}
+
+/** Effective cheating verdict for a config: its own newest flag, else inherited from its parent chain. */
+export interface CheatingStatus {
+  flagged: boolean;
+  reason: string;
+  source: string;
+  flaggedAt: string;
+  /** The config whose flag applies (differs from the queried config when inherited). */
+  flaggedConfigId: string;
+  inherited: boolean;
+}
+
 export interface BestEntry {
   seq: number;
   experimentId: string;
@@ -531,6 +570,8 @@ export interface ExperimentListItem extends ExperimentRow {
   anyMock: boolean;
   /** Some evaluation of this experiment skipped the LLM browser agent ([NO-BROWSER-AGENT]). */
   anyBrowserAgentSkipped: boolean;
+  /** Flagged as cheating (directly or via an ancestor config); null = not flagged. */
+  cheating: CheatingStatus | null;
 }
 
 export interface RunWithEvaluation extends RunRow {
@@ -1332,6 +1373,8 @@ export class Db {
       )
       .get(p.experimentId) as Raw;
     if (skipped.n > 0) throw new Error(`refusing to promote: ${skipped.n} evaluation(s) of ${p.experimentId} skipped the browser agent ([NO-BROWSER-AGENT])`);
+    const cheat = this.cheatingStatus(p.configId);
+    if (cheat) throw new Error(`refusing to promote ${p.configId}: flagged as cheating${cheat.inherited ? ` (inherited from ${cheat.flaggedConfigId})` : ''}: ${cheat.reason}`);
     const prev = this.getBestVerified();
     const at = p.promotedAt ?? nowIso();
     this.raw.transaction(() => {
@@ -1346,18 +1389,116 @@ export class Db {
     return this.getBestVerified()!;
   }
 
+  /** Newest promotion whose config is not flagged as cheating (directly or via an ancestor). */
   getBestVerified(): BestEntry | null {
-    const r = this.raw.prepare(`SELECT * FROM best_history ORDER BY seq DESC LIMIT 1`).get() as Raw | undefined;
-    return r ? mapBest(r) : null;
+    const rows = this.raw.prepare(`SELECT * FROM best_history ORDER BY seq DESC`).all() as Raw[];
+    if (!rows.length) return null;
+    const flagged = this.hasFlagsTable() && (this.raw.prepare(`SELECT COUNT(*) n FROM flags`).get() as Raw).n > 0;
+    for (const r of rows) if (!flagged || !this.cheatingStatus(r.config_id)) return mapBest(r);
+    return null;
+  }
+
+  // ---- cheating flags ------------------------------------------------------
+
+  private hasFlagsTable(): boolean {
+    return !!this.raw.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'flags'`).get();
+  }
+
+  /**
+   * Resolve a run id, experiment id or config id to the config a flag applies to.
+   * Baseline configs cannot be flagged (the baseline is the fixed reference point).
+   */
+  resolveFlagTarget(target: string): { configId: string; experimentId: string | null; runId: string | null } {
+    const run = this.raw.prepare(`SELECT run_id, experiment_id, config_id FROM runs WHERE run_id = ?`).get(target) as Raw | undefined;
+    let configId: string | null = null;
+    let experimentId: string | null = null;
+    let runId: string | null = null;
+    if (run) {
+      runId = run.run_id;
+      experimentId = run.experiment_id ?? null;
+      configId = run.config_id;
+    } else {
+      const exp = this.getExperiment(target);
+      if (exp) {
+        experimentId = exp.id;
+        configId = exp.candidateConfigId;
+        if (!configId) throw new Error(`experiment ${exp.id} has no candidate config to flag`);
+      } else if (this.getConfig(target)) {
+        configId = target;
+        const e = this.raw.prepare(`SELECT id FROM experiments WHERE candidate_config_id = ? ORDER BY seq DESC LIMIT 1`).get(target) as Raw | undefined;
+        experimentId = e?.id ?? null;
+      }
+    }
+    if (!configId) throw new Error(`no run, experiment or config named '${target}'`);
+    if (configId === 'baseline' || configId.startsWith('baseline')) throw new Error(`'${configId}' is a baseline config; baselines cannot be flagged`);
+    return { configId, experimentId, runId };
+  }
+
+  /** Append a cheating verdict (or a 'cleared' entry undoing one) for the config behind `target`. */
+  insertFlag(f: { target: string; kind: FlagKind; reason: string; source?: string; createdAt?: string }): FlagRow {
+    if (!f.reason.trim()) throw new Error('a reason is required');
+    const t = this.resolveFlagTarget(f.target);
+    const info = this.raw
+      .prepare(`INSERT INTO flags (config_id, experiment_id, run_id, kind, reason, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(t.configId, t.experimentId, t.runId, f.kind, f.reason.trim(), f.source ?? 'human', f.createdAt ?? nowIso());
+    return this.listFlags().find((x) => x.id === Number(info.lastInsertRowid))!;
+  }
+
+  listFlags(filter: { configId?: string } = {}): FlagRow[] {
+    if (!this.hasFlagsTable()) return [];
+    const rows = (
+      filter.configId
+        ? this.raw.prepare(`SELECT * FROM flags WHERE config_id = ? ORDER BY id`).all(filter.configId)
+        : this.raw.prepare(`SELECT * FROM flags ORDER BY id`).all()
+    ) as Raw[];
+    return rows.map((r) => ({
+      id: r.id,
+      configId: r.config_id,
+      experimentId: r.experiment_id ?? null,
+      runId: r.run_id ?? null,
+      kind: r.kind,
+      reason: r.reason,
+      source: r.source,
+      createdAt: r.created_at,
+    }));
+  }
+
+  /**
+   * Is this config flagged as cheating? Its own newest flag decides ('cleared' = explicitly fine);
+   * without one, the verdict is inherited from the parent config (children of a cheating config
+   * usually still contain the trick). Returns null when not flagged.
+   */
+  cheatingStatus(configId: string): CheatingStatus | null {
+    if (!this.hasFlagsTable()) return null;
+    const newest = this.raw.prepare(`SELECT * FROM flags WHERE config_id = ? ORDER BY id DESC LIMIT 1`);
+    const seen = new Set<string>();
+    let cur: string | null = configId;
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      const f = newest.get(cur) as Raw | undefined;
+      if (f) {
+        if (f.kind === 'cleared') return null;
+        return { flagged: true, reason: f.reason, source: f.source, flaggedAt: f.created_at, flaggedConfigId: cur, inherited: cur !== configId };
+      }
+      cur = this.parentConfigOf(cur);
+    }
+    return null;
+  }
+
+  private parentConfigOf(configId: string): string | null {
+    const c = this.getConfig(configId);
+    if (c?.parentId) return c.parentId;
+    const e = this.raw.prepare(`SELECT parent_config_id FROM experiments WHERE candidate_config_id = ? ORDER BY seq LIMIT 1`).get(configId) as Raw | undefined;
+    return e?.parent_config_id ?? null;
   }
 
   /** Every promotion in order (the "best verified token usage over experiments" series). */
-  getBestHistory(): (BestEntry & { experimentSeq: number | null })[] {
+  getBestHistory(): (BestEntry & { experimentSeq: number | null; flaggedCheating: boolean })[] {
     return (
       this.raw
         .prepare(`SELECT b.*, e.seq AS experiment_seq FROM best_history b LEFT JOIN experiments e ON e.id = b.experiment_id ORDER BY b.seq`)
         .all() as Raw[]
-    ).map((r) => ({ ...mapBest(r), experimentSeq: r.experiment_seq ?? null }));
+    ).map((r) => ({ ...mapBest(r), experimentSeq: r.experiment_seq ?? null, flaggedCheating: !!this.cheatingStatus(r.config_id) }));
   }
 
   // ---- recovery ------------------------------------------------------------
@@ -1519,6 +1660,7 @@ export class Db {
       improvementVsBestPct: med !== null && bestMedian ? ((bestMedian - med) / bestMedian) * 100 : null,
       anyMock: e.isMock || runs.some((r) => r.usedMockProvider),
       anyBrowserAgentSkipped,
+      cheating: e.candidateConfigId ? this.cheatingStatus(e.candidateConfigId) : null,
     };
   }
 

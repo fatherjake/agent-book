@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { enc, useApi } from '../api';
 import type { ExperimentDetail } from '../api-types';
-import { Card, LoadState, MockBadge, NoBrowserBadge, OutcomeBadge, PassBadge, Stat } from '../components';
+import { Card, CheatingBadge, LoadState, MockBadge, NoBrowserBadge, OutcomeBadge, PassBadge, Stat } from '../components';
 import { fmtDate, fmtDuration, fmtPct, fmtScore, fmtTokens, fmtUsd } from '../format';
 import { RunPanel } from './Run';
 
@@ -45,12 +45,18 @@ export function ExperimentView({ id }: { id: string }) {
               <a href="#/experiments">Experiments</a> / {e.id}
             </div>
             <h1>
-              {e.id} <MockBadge show={e.isMock} /> <NoBrowserBadge show={e.noBrowserAgent} /> <OutcomeBadge outcome={e.outcome} />{' '}
+              {e.id} <MockBadge show={e.isMock} /> <NoBrowserBadge show={e.noBrowserAgent} /> <CheatingBadge cheating={e.cheating} /> <OutcomeBadge outcome={e.outcome} />{' '}
               <span className="badge neutral">{e.status}</span>
             </h1>
             {e.isMock && (
               <div className="mock-banner">
                 <MockBadge /> This experiment ran against the mock provider. Its token counts are not real measurements.
+              </div>
+            )}
+            {e.cheating && (
+              <div className="mock-banner">
+                <CheatingBadge cheating={e.cheating} /> Flagged as cheating{e.cheating.inheritedFrom ? ` (inherited from ${e.cheating.inheritedFrom})` : ''}:{' '}
+                {e.cheating.reason}. It is never promoted, does not count as the best config, and the research agent is told not to reuse it.
               </div>
             )}
             {e.noBrowserAgent && (

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useApi } from '../api';
 import type { ExperimentRow } from '../api-types';
-import { LoadState, MockBadge, NoBrowserBadge, OutcomeBadge, PassBadge } from '../components';
+import { CheatingBadge, LoadState, MockBadge, NoBrowserBadge, OutcomeBadge, PassBadge } from '../components';
 import { fmtDate, fmtDuration, fmtPct, fmtScore, fmtTokens, fmtUsd } from '../format';
 
 type Key = keyof ExperimentRow;
@@ -82,7 +82,7 @@ export function HistoryView() {
                   {rows.map((r) => (
                     <tr key={r.id} className="clickable" onClick={() => (window.location.hash = `#/experiments/${r.id}`)}>
                       <td>
-                        <a href={`#/experiments/${r.id}`}>{r.id}</a> <MockBadge show={r.isMock} /> <NoBrowserBadge show={r.noBrowserAgent} />
+                        <a href={`#/experiments/${r.id}`}>{r.id}</a> <MockBadge show={r.isMock} /> <NoBrowserBadge show={r.noBrowserAgent} /> <CheatingBadge cheating={r.cheating} />
                       </td>
                       <td className="nowrap">{fmtDate(r.createdAt)}</td>
                       <td>{r.model}</td>

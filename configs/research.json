@@ -1,5 +1,5 @@
 {
-  "$comment": "Research loop settings. CLI flags of `npm run research` override these. limits/provider of coding configs, the evaluator, thresholds and token accounting are NOT configurable by the research agent. Budgets: maxTotalTokens (all roles) / maxCodingTokens (null = no cap); maxResearchCostUsd is an API-EQUIVALENT cost from the local price table (null = off; nothing is billed per token on a Claude subscription). Subscription usage limits: the loop waits up to maxUsageLimitWaitSec for the reset (+usageLimitMarginSec), then retries; waiting is not counted against maxTotalDurationSec. researchMode: \"agentic\" (default) runs the research agent in a sandbox container (Read/Grep/Glob/Bash, Write only to /research/scratch) over a workspace of past coding sessions (profiles, transcripts, usage), capped by researchMaxRuntimeSec and researchMaxTotalTokens per proposal; \"simple\" is the old single no-tools host call. researchModel may be claude-opus-5-5 when analysis quality matters.",
+  "$comment": "Research loop settings. CLI flags of `npm run research` override these. limits/provider of coding configs, the evaluator, thresholds and token accounting are NOT configurable by the research agent. Budgets: maxTotalTokens (all roles) / maxCodingTokens (null = no cap); maxResearchCostUsd is an API-EQUIVALENT cost from the local price table (null = off; nothing is billed per token on a Claude subscription). Subscription usage limits: the loop waits up to maxUsageLimitWaitSec for the reset (+usageLimitMarginSec), then retries; waiting is not counted against maxTotalDurationSec. researchMode: \"agentic\" (default) runs the research agent in a sandbox container (Read/Grep/Glob/Bash, Write only to /research/scratch) over a workspace of past coding sessions (profiles, transcripts, usage), capped by researchMaxRuntimeSec and researchMaxTotalTokens per proposal; \"simple\" is the old single no-tools host call. researchModel may be claude-opus-5-5 when analysis quality matters. quickRunMaxTokenRatio: verification only runs when the quick run used <= ratio x the best verified median (1.0 = must already beat the best; null = always verify). Cheating flags (npm run results -- --flag-cheating <run|experiment> --reason ...) reject a candidate immediately, remove it (and configs derived from it) from best, and are shown to the research agent. runConcurrency: benchmark runs executed in parallel per batch (each fully isolated; measured ~120 MiB per coding container in the Docker VM, plus one host Chromium + Claude Code per browser-agent evaluation); budgets are checked before each run starts, so they can be overshot by up to runConcurrency-1 in-flight runs.",
   "researchProvider": "claude-code",
   "researchModel": "claude-sonnet-5-5",
   "researchEffort": "high",
@@ -22,8 +22,9 @@
   "maxTotalDurationSec": 86400,
   "verificationRuns": 5,
   "quickRuns": 1,
+  "runConcurrency": 5,
   "noiseMarginPct": 0,
-  "quickRunMaxTokenRatio": 1.5,
+  "quickRunMaxTokenRatio": 1.0,
   "singleVariableExperiments": 8,
   "allowModelChange": false,
   "allowedModels": [],

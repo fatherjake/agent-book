@@ -388,7 +388,7 @@ export interface EvaluationResult {
 // ---------------------------------------------------------------------------
 
 export type ExperimentStatus = 'pending' | 'running' | 'verifying' | 'completed' | 'rejected' | 'interrupted' | 'failed';
-export type ExperimentOutcome = 'promoted' | 'not_better' | 'failed_quick_run' | 'failed_verification' | 'baseline' | 'error' | null;
+export type ExperimentOutcome = 'promoted' | 'not_better' | 'failed_quick_run' | 'failed_verification' | 'flagged_cheating' | 'baseline' | 'error' | null;
 
 export interface Experiment {
   id: string;

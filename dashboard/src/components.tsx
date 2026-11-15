@@ -10,6 +10,15 @@ export function MockBadge({ show = true, title }: { show?: boolean; title?: stri
   );
 }
 
+export function CheatingBadge({ cheating }: { cheating: { reason: string; inheritedFrom: string | null } | null | undefined }) {
+  if (!cheating) return null;
+  return (
+    <span className="badge fail" title={`Flagged as cheating${cheating.inheritedFrom ? ` (inherited from ${cheating.inheritedFrom})` : ''}: ${cheating.reason}`}>
+      cheating
+    </span>
+  );
+}
+
 export function NoBrowserBadge({ show = true }: { show?: boolean }) {
   if (!show) return null;
   return (
@@ -31,7 +40,7 @@ export function OutcomeBadge({ outcome }: { outcome: string | null | undefined }
       ? 'pass'
       : outcome === 'not_better'
         ? 'neutral'
-        : outcome === 'error' || outcome.startsWith('failed') || outcome === 'fail'
+        : outcome === 'error' || outcome.startsWith('failed') || outcome === 'fail' || outcome === 'flagged_cheating'
           ? 'fail'
           : 'neutral';
   return <span className={'badge ' + cls}>{outcome.replace(/_/g, ' ')}</span>;

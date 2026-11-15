@@ -27,9 +27,18 @@ export interface ResearchSettings extends ResearchBudgets {
   codingProvider: string | null;
   /** Runs in the quick screen (1 per TASK §10). */
   quickRuns: number;
+  /**
+   * Benchmark runs executed in parallel within a batch (verification, baseline, holdout). Each run is
+   * fully isolated (own containers/network/gateway/ports). Budgets are checked before each run starts,
+   * so they can be overshot by up to runConcurrency-1 in-flight runs.
+   */
+  runConcurrency: number;
   /** Required improvement over the best median, in percent (0 = any strict improvement). */
   noiseMarginPct: number;
-  /** Skip verification when the quick run used more than ratio × best median tokens (null = never skip). */
+  /**
+   * Skip verification when the quick run used more than ratio × the best verified median (null = never
+   * skip). 1.0 (default) = only verify candidates whose quick run already beat the current best.
+   */
   quickRunMaxTokenRatio: number | null;
   /** For the first N candidate experiments, exactly one major variable may change. */
   singleVariableExperiments: number;
@@ -81,8 +90,9 @@ export const DEFAULT_RESEARCH_SETTINGS: ResearchSettings = {
   maxTotalDurationSec: 24 * 3600,
   verificationRuns: 5,
   quickRuns: 1,
+  runConcurrency: 5,
   noiseMarginPct: 0,
-  quickRunMaxTokenRatio: 1.5,
+  quickRunMaxTokenRatio: 1.0,
   singleVariableExperiments: 8,
   allowModelChange: false,
   allowedModels: [],
@@ -105,6 +115,8 @@ export function validateSettings(s: ResearchSettings): string[] {
   posInt('maxExperiments', 0);
   posInt('verificationRuns', 1);
   posInt('quickRuns', 1);
+  posInt('runConcurrency', 1);
+  if (s.runConcurrency > 8) errs.push('runConcurrency must be <= 8');
   posInt('maxRuntimePerExperimentSec', 1);
   posInt('maxTotalDurationSec', 1);
   posInt('singleVariableExperiments', 0);
@@ -122,8 +134,8 @@ export function validateSettings(s: ResearchSettings): string[] {
   if (s.maxTokensPerCodingRun !== null && (!Number.isInteger(s.maxTokensPerCodingRun) || s.maxTokensPerCodingRun < 1000))
     errs.push('maxTokensPerCodingRun must be null or an integer >= 1000');
   if (typeof s.noiseMarginPct !== 'number' || s.noiseMarginPct < 0 || s.noiseMarginPct >= 100) errs.push('noiseMarginPct must be in [0,100)');
-  if (s.quickRunMaxTokenRatio !== null && (typeof s.quickRunMaxTokenRatio !== 'number' || s.quickRunMaxTokenRatio <= 1))
-    errs.push('quickRunMaxTokenRatio must be null or > 1');
+  if (s.quickRunMaxTokenRatio !== null && (typeof s.quickRunMaxTokenRatio !== 'number' || s.quickRunMaxTokenRatio <= 0))
+    errs.push('quickRunMaxTokenRatio must be null or > 0');
   if (!s.holdout || typeof s.holdout.onPromotion !== 'boolean' || !Number.isInteger(s.holdout.runs) || s.holdout.runs < 1)
     errs.push('holdout must be {onPromotion: boolean, runs: integer >= 1}');
   if (typeof s.pausePollSec !== 'number' || s.pausePollSec <= 0) errs.push('pausePollSec must be > 0');

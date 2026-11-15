@@ -1,5 +1,6 @@
 /**
  * npm run results -- [--experiment <id>] [--runs] [--json] [--limit N]
+ * npm run results -- --flag-cheating <run|experiment|config> --reason "..."   (or --clear-flag, --flags)
  * Terminal view of experiments and runs from results/benchmark.db. [MOCK] marks mock-provider results.
  */
 import { resolve } from 'node:path';
@@ -17,8 +18,24 @@ export const RESULTS_CLI: CommandSpec = {
     { name: 'limit', type: 'number', description: 'Show only the last N rows', integer: true, min: 1 },
     { name: 'json', type: 'boolean', description: 'Print JSON instead of tables' },
     { name: 'db', type: 'string', description: 'SQLite path (default results/benchmark.db or $FRUGAL_DB_PATH)' },
+    {
+      name: 'flag-cheating',
+      type: 'string',
+      description:
+        'Mark the config behind a run id, experiment id or config id as CHEATING (needs --reason). It is rejected (a running candidate stops before its next run), removed from best together with configs derived from it, and shown to the research agent',
+    },
+    { name: 'clear-flag', type: 'string', description: 'Undo a cheating flag for a run/experiment/config (needs --reason; the flag history is kept)' },
+    { name: 'reason', type: 'string', description: 'Why (required with --flag-cheating / --clear-flag; shown to the research agent)' },
+    { name: 'flags', type: 'boolean', description: 'List all cheating flags' },
   ],
-  examples: ['npm run results', 'npm run results -- --experiment exp-0003', 'npm run results -- --runs --limit 20', 'npm run results -- --json'],
+  examples: [
+    'npm run results',
+    'npm run results -- --experiment exp-0003',
+    'npm run results -- --runs --limit 20',
+    'npm run results -- --json',
+    'npm run results -- --flag-cheating exp-0012 --reason "skill embeds a prebuilt server.js"',
+    'npm run results -- --clear-flag exp-0012 --reason "false alarm: the helper only runs curl"',
+  ],
 };
 
 function overview(db: Db): string {
@@ -46,7 +63,7 @@ function experimentsTable(db: Db, limit?: number): string {
   return textTable(
     ['id', 'config', 'parent', 'model', 'status', 'outcome', 'pass', 'median tok', 'vs best', 'API-eq. cost', 'visual', 'time', 'hypothesis'],
     list.map((e) => [
-      e.id + flagTags(e.anyMock, e.anyBrowserAgentSkipped),
+      e.id + flagTags(e.anyMock, e.anyBrowserAgentSkipped) + (e.cheating ? ' [CHEATING]' : ''),
       e.candidateConfigId ?? '—',
       e.parentConfigId ?? '—',
       e.model,
@@ -96,8 +113,11 @@ function experimentDetail(db: Db, id: string): string {
   if (!d) return `Experiment ${id} not found.`;
   const e = d.experiment;
   const lines = [
-    `Experiment ${e.id}${flagTags(e.anyMock, e.anyBrowserAgentSkipped)}  [${e.kind}]`,
+    `Experiment ${e.id}${flagTags(e.anyMock, e.anyBrowserAgentSkipped)}${e.cheating ? ' [CHEATING]' : ''}  [${e.kind}]`,
     `  status/outcome : ${e.status} / ${e.outcome ?? '—'}`,
+    ...(e.cheating
+      ? [`  CHEATING       : flagged by ${e.cheating.source} ${e.cheating.flaggedAt}${e.cheating.inherited ? ` (inherited from ${e.cheating.flaggedConfigId})` : ''}: ${e.cheating.reason}`]
+      : []),
     `  config         : ${e.candidateConfigId ?? '—'} (parent ${e.parentConfigId ?? '—'})${d.config ? `, hash ${d.config.hash.slice(0, 12)}` : ''}`,
     `  model          : ${e.provider}/${e.model}`,
     `  created        : ${e.createdAt}${e.finishedAt ? ` → ${e.finishedAt}` : ''}`,
@@ -124,6 +144,51 @@ async function main(): Promise<void> {
   const { openDb } = await import('../storage/db.js');
   const db = openDb(args.db as string | undefined);
   const limit = args.limit as number | undefined;
+  const flagTarget = (args['flag-cheating'] ?? args['clear-flag']) as string | undefined;
+  if (flagTarget) {
+    const fail = (msg: string): never => {
+      console.error(`error: ${msg}`);
+      db.close();
+      process.exit(2);
+    };
+    if (args['flag-cheating'] && args['clear-flag']) fail('use either --flag-cheating or --clear-flag, not both');
+    const reason = (args.reason as string | undefined)?.trim();
+    if (!reason) fail('--reason "..." is required (it is recorded and shown to the research agent)');
+    const before = db.getBestVerified();
+    let f: import('../storage/db.js').FlagRow;
+    try {
+      f = db.insertFlag({ target: flagTarget, kind: args['flag-cheating'] ? 'cheating' : 'cleared', reason: reason!, source: 'human' });
+    } catch (e) {
+      return fail((e as Error).message);
+    }
+    const after = db.getBestVerified();
+    const derived = db
+      .listExperimentsWithAggregates()
+      .filter((e) => e.cheating?.inherited && e.cheating.flaggedConfigId === f.configId)
+      .map((e) => e.id);
+    console.log(`${f.kind === 'cheating' ? 'Flagged as CHEATING' : 'Cleared flag on'}: ${f.configId}${f.experimentId ? ` (${f.experimentId})` : ''} — ${f.reason}`);
+    if (derived.length) console.log(`  also excluded (derived from it): ${derived.join(', ')}`);
+    if (before?.configId !== after?.configId)
+      console.log(`  best verified config: ${before?.configId ?? 'none'} → ${after ? `${after.configId} (${after.experimentId}, median ${fmtTokens(after.medianTokens)})` : 'none'}`);
+    const { syncPublishedBest } = await import('../researcher/loop.js');
+    const { resultsDir, CONFIGS_DIR } = await import('../runner/env.js');
+    const { join } = await import('node:path');
+    const republished = syncPublishedBest(db, { bestConfigDir: join(resultsDir(), 'best-config'), configsRoot: CONFIGS_DIR });
+    if (republished) console.log(`  results/best-config/ now holds ${republished}`);
+    console.log('  A running research session picks this up before its next run.');
+    db.close();
+    return;
+  }
+  if (args.flags) {
+    const flags = db.listFlags();
+    console.log(
+      flags.length
+        ? textTable(['#', 'when', 'kind', 'config', 'experiment', 'run', 'by', 'reason'], flags.map((f) => [f.id, f.createdAt, f.kind, f.configId, f.experimentId ?? '—', f.runId ?? '—', f.source, f.reason]))
+        : 'No flags.',
+    );
+    db.close();
+    return;
+  }
   if (args.json) {
     const out = args.experiment
       ? db.getExperimentDetail(args.experiment as string)

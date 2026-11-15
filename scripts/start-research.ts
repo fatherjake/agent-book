@@ -1,6 +1,6 @@
 /**
  * npm run research -- [--max-experiments N] [--max-total-tokens N] [--max-coding-tokens N] [--max-cost USD]
- *                     [--max-duration 8h] [--verification-runs N] [--max-tokens-per-run N] [--resume] [--dry-run]
+ *                     [--max-duration 8h] [--verification-runs N] [--concurrency N] [--max-tokens-per-run N] [--resume] [--dry-run]
  *                     [--provider mock|anthropic] [--mock-script default|reference-app]
  *                     [--research-provider claude-code|anthropic|mock] [--max-usage-limit-wait 6h]
  *
@@ -38,6 +38,7 @@ export const RESEARCH_CLI: CommandSpec = {
     { name: 'max-duration', type: 'string', description: 'Max active research time, e.g. 3600, 90m, 8h' },
     { name: 'max-runtime-per-experiment', type: 'string', description: 'Abort an experiment after this long, e.g. 4h' },
     { name: 'verification-runs', type: 'number', description: 'Verification runs per promising candidate', integer: true, min: 1 },
+    { name: 'concurrency', type: 'number', description: 'Benchmark runs executed in parallel per batch (default from settings: 5)', integer: true, min: 1 },
     { name: 'max-tokens-per-run', type: 'number', description: "Cap on coding tokens per run (overrides a higher config limit; config files untouched)", integer: true, min: 1000 },
     { name: 'noise-margin', type: 'number', description: 'Required improvement over the best median, in percent', min: 0 },
     { name: 'resume', type: 'boolean', description: "Resume the latest session (its spend and elapsed time count against the budgets)" },
@@ -260,6 +261,7 @@ async function main(): Promise<void> {
       maxTotalDurationSec: args['max-duration'] ? parseDurationSec(args['max-duration'] as string) : undefined,
       maxRuntimePerExperimentSec: args['max-runtime-per-experiment'] ? parseDurationSec(args['max-runtime-per-experiment'] as string) : undefined,
       verificationRuns: args['verification-runs'] as number | undefined,
+      runConcurrency: args.concurrency as number | undefined,
       maxTokensPerCodingRun: args['max-tokens-per-run'] as number | undefined,
       noiseMarginPct: args['noise-margin'] as number | undefined,
       codingProvider: (args.provider as string | undefined) ?? undefined,
@@ -315,7 +317,7 @@ async function main(): Promise<void> {
     console.log(`  max duration        ${fmtDuration(b.maxTotalDurationSec * 1000)} active`);
     console.log(`  per experiment      ${fmtDuration(b.maxRuntimePerExperimentSec * 1000)}`);
     console.log(`  tokens per run cap  ${b.maxTokensPerCodingRun ? fmtTokens(b.maxTokensPerCodingRun) : 'config limit'}`);
-    console.log(`  verification runs   ${b.verificationRuns} (quick runs: ${settings.quickRuns}, noise margin ${settings.noiseMarginPct}%)`);
+    console.log(`  verification runs   ${b.verificationRuns} (quick runs: ${settings.quickRuns}, noise margin ${settings.noiseMarginPct}%, ${settings.runConcurrency} in parallel)`);
     console.log(`  holdout             ${settings.holdout.onPromotion ? `${settings.holdout.runs} run(s) on each promotion` : 'off'}`);
     console.log(`  single-variable     first ${settings.singleVariableExperiments} experiments`);
     console.log(`  pause file          ${join(resultsDir(), 'research.pause')}`);

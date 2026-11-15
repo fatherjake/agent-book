@@ -96,7 +96,7 @@ export function createDashboardData(opts: DataOptions): DashboardData {
   }
 
   function isVerified(e: ExperimentListItem): boolean {
-    return Boolean(e.summary?.meetsQualityRequirements) && (e.summary?.runs ?? 0) > 1 && (e.outcome === null || VERIFIED_OUTCOMES.has(e.outcome));
+    return !e.cheating && Boolean(e.summary?.meetsQualityRequirements) && (e.summary?.runs ?? 0) > 1 && (e.outcome === null || VERIFIED_OUTCOMES.has(e.outcome));
   }
 
   /** Finished-run counts per experiment (all phases), from storage's listRuns(). */
@@ -177,6 +177,7 @@ export function createDashboardData(opts: DataOptions): DashboardData {
       improvementVsBestPct: improvement,
       isMock: e.anyMock,
       noBrowserAgent: e.anyBrowserAgentSkipped,
+      cheating: e.cheating ? { reason: e.cheating.reason, flaggedAt: e.cheating.flaggedAt, inheritedFrom: e.cheating.inherited ? e.cheating.flaggedConfigId : null } : null,
     };
   }
 
@@ -452,7 +453,7 @@ export function createDashboardData(opts: DataOptions): DashboardData {
           const t = tokensOf(e);
           if (isVerified(e) && t !== null && (runningBest === null || t < runningBest)) runningBest = t;
         } else {
-          const promos = history.filter((h) => h.experimentSeq !== null && h.experimentSeq <= e.seq);
+          const promos = history.filter((h) => !h.flaggedCheating && h.experimentSeq !== null && h.experimentSeq <= e.seq);
           runningBest = promos.length ? promos[promos.length - 1].medianTokens : null;
         }
         return {

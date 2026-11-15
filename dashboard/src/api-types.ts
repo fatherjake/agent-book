@@ -67,6 +67,8 @@ export interface ExperimentRow {
   isMock: boolean;
   /** Some evaluation skipped the LLM browser agent ([NO-BROWSER-AGENT]). */
   noBrowserAgent: boolean;
+  /** Flagged as cheating by a human (directly, or inherited from the parent config). */
+  cheating: { reason: string; flaggedAt: string; inheritedFrom: string | null } | null;
 }
 
 export interface RunRow {

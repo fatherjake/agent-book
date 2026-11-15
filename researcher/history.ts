@@ -117,6 +117,10 @@ function describeExperiment(db: Db, e: ExperimentListItem, opts: Required<Histor
     lines.push(`  failed checks: ${items.join('; ')}`);
   }
   if (e.holdoutPassed !== null) lines.push(`  holdout: ${e.holdoutPassed ? 'passed' : 'failed'}`);
+  if (e.cheating)
+    lines.push(
+      `  FLAGGED AS CHEATING by ${e.cheating.source}${e.cheating.inherited ? ` (inherited from ${e.cheating.flaggedConfigId})` : ''}: ${oneLine(e.cheating.reason, 240)} (do NOT reuse this technique)`,
+    );
   if (e.error) lines.push(`  error: ${oneLine(e.error, 240)}`);
   return lines.join('\n');
 }
@@ -159,6 +163,13 @@ export function buildHistoryDigest(db: Db, options: HistoryOptions = {}): string
         .join(', ')}`,
     );
   }
+  const cheats = all.filter((e) => e.cheating && !e.cheating.inherited);
+  if (cheats.length)
+    out.push(
+      `FLAGGED AS CHEATING (rejected; never promoted; configs derived from them are also excluded): ${cheats
+        .map((e) => `${e.id}/${e.candidateConfigId}: ${oneLine(e.cheating!.reason, 160)}`)
+        .join('; ')}`,
+    );
   const outcomes = new Map<string, number>();
   for (const e of all) outcomes.set(e.outcome ?? e.status, (outcomes.get(e.outcome ?? e.status) ?? 0) + 1);
   if (all.length) out.push(`OUTCOMES: ${[...outcomes].map(([k, n]) => `${k} ${n}`).join(', ')} (total ${all.length})`);

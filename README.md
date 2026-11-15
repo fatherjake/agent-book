@@ -377,6 +377,7 @@ The unattended research loop. Settings come from `configs/research.json`; flags 
 | `--max-duration <t>` | Max active time, e.g. `3600`, `90m`, `8h` |
 | `--max-runtime-per-experiment <t>` | Abort an experiment after this long |
 | `--verification-runs <n>` | Verification runs per promising candidate |
+| `--concurrency <n>` | Benchmark runs executed in parallel per batch (default 5, max 8). Each run is fully isolated; budgets are checked before each run starts, so they can overshoot by up to n-1 in-flight runs |
 | `--max-tokens-per-run <n>` | Per-run coding token cap (can only tighten the config's limit; config files untouched) |
 | `--noise-margin <pct>` | Required improvement over the best median, in percent |
 | `--resume` | Continue the latest session (its tokens, API-equivalent cost and time count against the budgets) |
@@ -416,6 +417,26 @@ The unattended research loop. Settings come from `configs/research.json`; flags 
 
 Terminal view: overview, experiment table, `--experiment exp-0003` detail (checks, diff, artifacts),
 `--runs` (per-run tokens in/out/cacheRead/cacheWrite), `--limit N`, `--json`, `--db`.
+
+**Flag cheating (human review).** The automatic guard can't catch every trick, so a suspiciously cheap run can
+be marked by hand:
+
+```bash
+npm run results -- --flag-cheating <run-id|exp-id|config-id> --reason "skill embeds a prebuilt server.js"
+npm run results -- --clear-flag exp-0012 --reason "false alarm"   # undo; the history is kept
+npm run results -- --flags                                         # list all flags
+```
+
+A flag applies to the **config** behind the run or experiment, and has these effects:
+
+* **Rejected:** the config is never promoted. A candidate that is still running stops before its next run and
+  ends as `flagged_cheating`.
+* **Removed from best:** the best verified config falls back to the newest clean promotion, and
+  `results/best-config/` is republished at once (a running loop also checks at the start of each experiment).
+  Configs **derived from** a flagged config inherit the flag unless they get their own `--clear-flag`.
+* **Shown to the researcher:** the flag and its reason appear in the research agent's digest and in
+  `outcome.json`, with an instruction never to reuse the technique.
+* **Stored safely:** flags live in an append-only `flags` table. Baselines can't be flagged.
 
 ### `npm run report -- [--out dir] [--db path]`
 
@@ -560,7 +581,7 @@ loop while budgets allow:
 | maxTotalDurationSec | 86,400 (24 h active) |
 | verificationRuns / quickRuns | 5 / 1 |
 | noiseMarginPct | 0 |
-| quickRunMaxTokenRatio | 1.5 (skip verification if the quick run used > 1.5× the best median) |
+| quickRunMaxTokenRatio | 1.0 (verify only when the quick run already beat the best verified median; `null` = always verify) |
 | holdout | 1 run on each promotion |
 | maxConsecutiveProposalFailures | 3 |
 | maxUsageLimitWaitSec / usageLimitMarginSec / usageLimitUnknownResetWaitSec | 21,600 (6 h) / 120 / 900 |

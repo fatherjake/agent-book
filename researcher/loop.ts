@@ -18,7 +18,7 @@
  * Everything external is injected (db, runBenchmark, researchAgent, clock, …) so the loop can be
  * tested without Docker or models and so parallel execution can be added later.
  */
-import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { ExperimentOutcome, ExperimentStatus, ModelProvider } from '../runner/types.js';
@@ -159,6 +159,42 @@ export function publishBestConfig(
     renameSync(bestConfigDir, join(hist, `${new Date().toISOString().replace(/[:.]/g, '-')}`));
   }
   renameSync(tmp, bestConfigDir);
+}
+
+/**
+ * Make results/best-config/ match db.getBestVerified(). Needed after a cheating flag changes which
+ * config is best (the flagged one, or one derived from it, may currently be published).
+ * Returns the newly published config id, or null when nothing changed.
+ */
+export function syncPublishedBest(db: Db, p: { bestConfigDir: string; configsRoot: string }): string | null {
+  const best = db.getBestVerified();
+  if (!best) return null;
+  let published: string | null = null;
+  try {
+    published = JSON.parse(readFileSync(join(p.bestConfigDir, 'summary.json'), 'utf8')).configId ?? null;
+  } catch {
+    published = null;
+  }
+  if (published === best.configId) return null;
+  let dir: string;
+  try {
+    dir = configDir(best.configId, p.configsRoot);
+  } catch {
+    return null;
+  }
+  if (!existsSync(dir)) return null;
+  const exp = db.getExperiment(best.experimentId);
+  publishBestConfig(p.bestConfigDir, { fromDir: dir }, {
+    configId: best.configId,
+    experimentId: best.experimentId,
+    promotedAt: best.promotedAt,
+    republishedAt: new Date().toISOString(),
+    republishedBecause: published ? `${published} is flagged as cheating (or derived from a flagged config)` : 'no published copy',
+    hypothesis: exp?.hypothesis ?? null,
+    changeSummary: exp?.changeSummary ?? null,
+    summary: best.summary,
+  });
+  return best.configId;
 }
 
 function parseConfigJson(files: Record<string, string>): { provider?: string; model?: string } {
@@ -322,10 +358,18 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
   };
 
   let midRunStop: StopReason | null = null;
+  /** Candidate config currently being benchmarked (checked against human cheating flags before every run). */
+  let currentCandidate: string | null = null;
+  const flaggedCandidate = () => (currentCandidate ? db.cheatingStatus(currentCandidate) : null);
   const beforeRun = async () => {
     await waitWhilePaused();
     heartbeat();
     if (signal?.aborted) return false;
+    const cheat = flaggedCandidate();
+    if (cheat) {
+      log.warn('candidate flagged as cheating; stopping its batch', { configId: currentCandidate, reason: cheat.reason });
+      return false;
+    }
     const stop = budgetStop(false);
     if (stop) {
       midRunStop = stop;
@@ -385,6 +429,8 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
       evaluatorProvider: deps.evaluatorProvider,
       skipBrowserAgent: settings.skipBrowserAgent,
       maxTokensPerRun: budgets.maxTokensPerCodingRun,
+      concurrency: settings.runConcurrency ?? 1,
+      sleep: (ms, sig) => clock.sleep(ms, sig),
       beforeRun,
       onRunComplete: () => {
         consecutiveLimitHits = 0;
@@ -535,6 +581,12 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
     if (stop) return finish(stop);
     midRunStop = null;
 
+    try {
+      const republished = syncPublishedBest(db, paths);
+      if (republished) log.warn('best config changed by a cheating flag; republished', { configId: republished });
+    } catch (e) {
+      log.error('failed to sync published best config', { error: String(e) });
+    }
     const best = db.getBestVerified();
     const parentConfigId = best?.configId ?? 'baseline';
     const bestMedian = best?.medianTokens ?? Number.POSITIVE_INFINITY;
@@ -658,9 +710,23 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
     log.info('experiment start', { experimentId: exp.id, configId: applied.configId, hypothesis: proposal.hypothesis });
 
     const es = experimentSignal();
+    currentCandidate = applied.configId;
+    /** A human flagged this candidate (or its parent) as cheating while it ran: reject it, never verify/promote. */
+    const rejectIfFlagged = (phase: string): boolean => {
+      const cheat = db.cheatingStatus(applied.configId);
+      if (!cheat) return false;
+      db.updateExperiment(exp.id, {
+        status: 'rejected',
+        outcome: 'flagged_cheating',
+        notes: `flagged as cheating during ${phase}${cheat.inherited ? ` (inherited from ${cheat.flaggedConfigId})` : ''}: ${cheat.reason}`,
+      });
+      log.warn('candidate rejected: flagged as cheating', { experimentId: exp.id, configId: applied.configId, phase });
+      return true;
+    };
     try {
       // 3. quick run
       const quick = await bench({ configId: applied.configId, runs: settings.quickRuns, phase: 'quick', experimentId: exp.id, signal: es.signal });
+      if (rejectIfFlagged('the quick run')) continue;
       if (quick.length < settings.quickRuns) {
         finishAborted(exp, es.timedOut(), 'quick run');
         if (signal?.aborted) return finish('interrupted');
@@ -680,7 +746,7 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
           status: 'completed',
           outcome: 'not_better',
           summary: { ...qs, phase: 'quick' },
-          notes: `verification skipped: quick run used ${Math.round(qs.medianTokens)} tokens > ${settings.quickRunMaxTokenRatio}× best median ${Math.round(bestMedian)}`,
+          notes: `verification skipped: quick run used ${Math.round(qs.medianTokens)} tokens > ${settings.quickRunMaxTokenRatio === 1 ? '' : `${settings.quickRunMaxTokenRatio}× `}best median ${Math.round(bestMedian)}`,
         });
         continue;
       }
@@ -688,6 +754,7 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
       // 4. verification
       exp = db.updateExperiment(exp.id, { status: 'verifying' });
       const ver = await bench({ configId: applied.configId, runs: budgets.verificationRuns, phase: 'verify', experimentId: exp.id, signal: es.signal });
+      if (rejectIfFlagged('verification')) continue;
       if (ver.length < budgets.verificationRuns) {
         finishAborted(exp, es.timedOut(), 'verification');
         if (signal?.aborted) return finish('interrupted');
@@ -712,6 +779,10 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
         if (vs.usedMockProvider || exp.isMock) why.push('[MOCK] mock-provider results can never be promoted');
         if (vs.browserAgentSkipped) why.push('[NO-BROWSER-AGENT] evaluated without the browser agent; never eligible for promotion');
         notes = why.length ? why.join('; ') : 'does not meet quality requirements';
+      } else if (db.cheatingStatus(applied.configId)) {
+        outcome = 'flagged_cheating';
+        status = 'rejected';
+        notes = `flagged as cheating: ${db.cheatingStatus(applied.configId)!.reason}`;
       } else if (vs.medianTokens < threshold) {
         outcome = 'promoted';
       } else {
@@ -735,6 +806,7 @@ export async function runResearchLoop(deps: LoopDeps, opts: LoopOptions): Promis
       if (signal?.aborted) return finish('interrupted');
     } finally {
       es.dispose();
+      currentCandidate = null;
       heartbeat();
     }
     if (midRunStop) return finish(midRunStop);
