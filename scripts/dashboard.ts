@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDashboardData } from '../dashboard/server/data.js';
+import { createChatHandler, isLoopback } from '../dashboard/server/chat.js';
 import { createDashboardServer } from '../dashboard/server/http.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -124,7 +125,10 @@ function main(): void {
 
   const data = createDashboardData({ dbPath, repoRoot, resultsDir });
   for (const w of data.warnings) console.warn(`[dashboard] ${w}`);
-  const server = createDashboardServer({ data, resultsDir, distDir });
+  // The chat pane runs `claude` on this machine, so it only works when bound to loopback.
+  const chatEnabled = isLoopback(args.host);
+  const chat = createChatHandler({ data, repoRoot, stateDir: path.join(resultsDir, 'chats'), enabled: chatEnabled });
+  const server = createDashboardServer({ data, resultsDir, distDir, chat });
 
   server.on('error', (err: NodeJS.ErrnoException) => {
     console.error(err.code === 'EADDRINUSE' ? `[dashboard] Port ${args.port} is in use; pass --port <n>.` : `[dashboard] ${err.message}`);
@@ -135,6 +139,7 @@ function main(): void {
     const port = typeof addr === 'object' && addr ? addr.port : args.port;
     console.log(`[dashboard] Reading ${path.relative(repoRoot, dbPath) || dbPath} (read-only)`);
     console.log(`[dashboard] Open http://${args.host}:${port}/`);
+    if (!chatEnabled) console.warn(`[dashboard] Chat pane disabled: ${args.host} is not a loopback address.`);
   });
 
   const shutdown = () => {

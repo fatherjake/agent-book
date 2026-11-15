@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useHashPath } from './api';
+import { ChatPane } from './ChatPane';
 import { HomeView } from './views/Home';
 import { ExperimentView } from './views/Experiment';
 import { RunView } from './views/Run';
@@ -33,7 +34,8 @@ export function App() {
 
   const seg = path.split('/').filter(Boolean);
   let view;
-  if (seg[0] === 'experiments' && seg[1]) view = <ExperimentView id={seg.slice(1).join('/')} />;
+  const experimentId = seg[0] === 'experiments' && seg[1] ? seg.slice(1).join('/') : null;
+  if (experimentId) view = <ExperimentView id={experimentId} />;
   else if (seg[0] === 'runs' && seg[1]) view = <RunView id={seg.slice(1).join('/')} />;
   else view = <HomeView />; // '#/', and the old '#/experiments' and '#/charts' links
 
@@ -61,7 +63,8 @@ export function App() {
         </div>
       </header>
       <main className="ds-main">{view}</main>
-      <footer className="ds-footer ds-caption">Read-only view of results/. Refresh to update.</footer>
+      <footer className="ds-footer ds-caption">Read-only view of results/. Updates every 5 seconds.</footer>
+      {experimentId && <ChatPane key={experimentId} experimentId={experimentId} />}
     </>
   );
 }

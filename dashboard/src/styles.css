@@ -204,3 +204,35 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .evidence-list { margin: 6px 0 2px 18px; padding: 0; color: var(--ds-muted); overflow-wrap: anywhere; }
 .token-profile .tp-input { min-width: 200px; max-width: 420px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .token-profile .table td, .token-profile .table th { white-space: nowrap; }
+
+/* ---- chat pane (ChatPane.tsx): docked to the bottom of experiment pages ------------------------ */
+body { padding-bottom: var(--chat-pane-h, 0px); }
+.chat-pane {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  display: flex; flex-direction: column;
+  background: var(--ds-surface); border-top: 1px solid var(--ds-border);
+}
+.chat-resize { position: absolute; top: -3px; left: 0; right: 0; height: 6px; cursor: ns-resize; }
+.chat-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--ds-3);
+  height: 36px; padding: 0 var(--ds-gutter); border-bottom: 1px solid var(--ds-border); flex: none;
+}
+.chat-title { font-weight: 500; color: var(--ds-ink); white-space: nowrap; }
+.chat-session { color: var(--ds-muted); font-size: var(--ds-fs-label); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: all; }
+.chat-log { flex: 1; overflow-y: auto; padding: var(--ds-3) var(--ds-gutter); display: flex; flex-direction: column; gap: var(--ds-3); }
+.chat-hint { max-width: 72ch; }
+.chat-msg { max-width: 92ch; }
+.chat-user { align-self: flex-end; background: var(--ds-fill); padding: var(--ds-2) var(--ds-3); white-space: pre-wrap; }
+.chat-assistant { align-self: flex-start; }
+.chat-text { white-space: pre-wrap; line-height: 1.5; }
+.chat-tool { color: var(--ds-muted); font-size: var(--ds-fs-label); margin: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-tool::before { content: '› '; }
+.chat-input { display: flex; gap: var(--ds-3); padding: var(--ds-3) var(--ds-gutter); border-top: 1px solid var(--ds-border); flex: none; }
+.chat-input textarea {
+  flex: 1; resize: none; font: inherit; color: var(--ds-ink); background: var(--ds-bg);
+  border: 1px solid var(--ds-border); padding: var(--ds-2) var(--ds-3);
+}
+.chat-input textarea:focus-visible { outline: 1px solid var(--ds-ink); outline-offset: -1px; }
+.chat-input .ds-btn { align-self: stretch; }
+@media (max-width: 640px) { .chat-session { display: none; } }
+.chat-input .ds-btn--primary:disabled { color: var(--ds-muted); border-color: var(--ds-border); }

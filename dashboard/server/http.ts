@@ -8,12 +8,15 @@
  *   GET /api/charts
  *   GET /artifacts/<path>      files under results/ only (traversal-safe)
  *   GET /*                     built SPA from dashboard/dist
+ *   GET|POST /api/chat/:experimentId[/stop]   chat pane (dashboard/server/chat.ts); the only
+ *                              non-GET route, loopback + same-origin + JSON only
  *
- * Every method other than GET/HEAD is rejected with 405.
+ * Every other method than GET/HEAD is rejected with 405.
  */
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import type { ChatHandler } from './chat.js';
 import type { DashboardData } from './data.js';
 
 export interface ServerOptions {
@@ -22,6 +25,8 @@ export interface ServerOptions {
   resultsDir: string;
   /** Absolute path of the built SPA (dashboard/dist). May not exist. */
   distDir: string;
+  /** Chat pane handler; without it /api/chat answers 404. */
+  chat?: ChatHandler;
 }
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -126,9 +131,19 @@ function sendFile(res: http.ServerResponse, file: string, opts: { head: boolean;
 }
 
 export function createDashboardServer(opts: ServerOptions): http.Server {
-  const { data, resultsDir, distDir } = opts;
+  const { data, resultsDir, distDir, chat } = opts;
 
   return http.createServer((req, res) => {
+    // The chat pane is the one route that reads a body (and may POST); it does its own checks.
+    const chatPath = (req.url ?? '/').split('?')[0].match(/^\/api\/chat\/([^/]+)(?:\/(stop))?$/);
+    if (chatPath && chat) {
+      const seg = [decodeURIComponent(chatPath[1]), ...(chatPath[2] ? [chatPath[2]] : [])];
+      chat(req, res, seg).catch((err) => {
+        if (!res.headersSent) sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+        else res.end();
+      });
+      return;
+    }
     // Never read request bodies; drain them so the connection stays healthy.
     req.resume();
     const method = req.method ?? 'GET';

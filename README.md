@@ -490,7 +490,22 @@ runs, all checks, evaluation screenshots from `results/runs/<runId>/eval/<suite>
 agent-trace viewer grouped by turn), and charts (best tokens over time, tokens vs. visual score, pass
 rate per config, cumulative cost). It builds `dashboard/dist` automatically the first time.
 API: `/api/overview`, `/api/experiments`, `/api/experiments/:id`, `/api/runs/:id`, `/api/charts`,
-`/artifacts/<path under results/>`.
+`/artifacts/<path under results/>`. Every view refreshes itself every 5 seconds.
+
+**Chat pane.** Each experiment page has a pane at the bottom with a Claude Code session for that
+experiment (`dashboard/server/chat.ts`, `/api/chat/:experimentId`). The first message starts the
+session with the experiment's context in the system prompt: the hypothesis, config diff, every run
+with its tokens, calls, time and failed mandatory checks, and the median passing run's `profile.md`.
+That snapshot is re-sent unchanged with every later message, and Claude is told to re-check the DB
+before relying on it. Each message runs your own `claude` CLI (your normal login) with
+`--setting-sources '' --permission-mode default`, so your personal permission settings don't apply,
+and it is read-only. It can use Read, Grep and Glob (but not `.env`), plus Bash limited to
+`sqlite3 -safe -readonly results/benchmark.db …`. It can't edit files, run other commands or use the
+web. It never goes through the benchmark gateway, and none of its tokens are recorded in the
+results. Chat only works when the dashboard listens on loopback (the default `--host 127.0.0.1`).
+Requests must also have a loopback Host, a same-origin Origin and a JSON body. State is kept in
+`results/chats/<experimentId>.json`. The pane header shows `claude --resume <id>` so you can
+continue in a terminal. Set `FRUGAL_CHAT_CLAUDE_BIN` to use a different `claude` binary.
 
 ### Other
 

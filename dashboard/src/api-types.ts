@@ -236,3 +236,20 @@ export interface Charts {
   passRateByConfig: { configId: string; runs: number; passes: number; passRate: number; isMock: boolean }[];
   costOverTime: { timestamp: string; coding: number; evaluator: number; research: number; total: number }[];
 }
+
+// ---- chat pane (dashboard/server/chat.ts) -------------------------------------------------------
+
+export type ChatPart = { kind: 'text'; text: string } | { kind: 'tool'; label: string };
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  parts: ChatPart[];
+}
+export interface ChatInfo {
+  /** False when the dashboard is not bound to loopback: chat requests are refused. */
+  enabled: boolean;
+  /** Claude Code session id; continue in a terminal with `claude --resume <id>`. */
+  sessionId: string;
+  started: boolean;
+  messages: ChatMessage[];
+  busy: boolean;
+}
