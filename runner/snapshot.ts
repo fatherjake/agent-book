@@ -41,7 +41,10 @@ export function gitDiffCommand(base: string): string {
   return [
     'set -e',
     'cd /workspace',
-    `git add -A -- . ${ex}`,
+    // No exclude pathspecs on `add`: git refuses (exit 1) when one names a gitignored path
+    // (node_modules, tmp, public/packs in Mastodon). `add -A .` skips ignored files anyway; the
+    // excludes on `diff` keep anything else listed out of the patch.
+    'git add -A -- .',
     `git diff --cached --binary --no-color --no-ext-diff ${base} -- . ${ex} > ${CONTAINER_PATCH_FILE}`,
   ].join('\n');
 }
