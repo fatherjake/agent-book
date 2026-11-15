@@ -6,7 +6,7 @@
  * Opens the SQLite results DB read-only and serves:
  *   GET /api/overview  /api/experiments  /api/experiments/:id  /api/runs/:id  /api/charts
  *   GET /artifacts/<path>   files under results/ (path-traversal safe)
- *   GET /                   the React UI from dashboard/dist (built automatically if missing)
+ *   GET /                   the React UI from dashboard/dist (built automatically if missing or stale)
  *
  * Development data: `npx tsx dashboard/dev-seed.ts` writes fake data to results/dev-dashboard.db,
  * then `npm run dashboard -- --db results/dev-dashboard.db`.
@@ -34,7 +34,7 @@ Options:
   --port <n>     Port to listen on (default 4173)
   --host <addr>  Interface to bind (default 127.0.0.1)
   --db <path>    SQLite DB to read (default results/benchmark.db, or $FRUGAL_DB_PATH)
-  --no-build     Don't build dashboard/dist automatically if it is missing
+  --no-build     Don't build dashboard/dist automatically if it is missing or stale
   -h, --help     Show this help`;
 }
 
@@ -65,15 +65,35 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
+/** Newest mtime of the UI sources (src/, index.html, vite/ts config). */
+function newestSourceMtime(dashDir: string): number {
+  let newest = 0;
+  const visit = (p: string) => {
+    let st: fs.Stats;
+    try {
+      st = fs.statSync(p);
+    } catch {
+      return;
+    }
+    if (st.isDirectory()) for (const e of fs.readdirSync(p)) visit(path.join(p, e));
+    else newest = Math.max(newest, st.mtimeMs);
+  };
+  for (const f of ['src', 'index.html', 'vite.config.ts', 'tsconfig.json']) visit(path.join(dashDir, f));
+  return newest;
+}
+
 function ensureBuilt(distDir: string, allowBuild: boolean): void {
-  if (fs.existsSync(path.join(distDir, 'index.html'))) return;
   const dashDir = path.join(repoRoot, 'dashboard');
+  const index = path.join(distDir, 'index.html');
+  const missing = !fs.existsSync(index);
+  const stale = !missing && newestSourceMtime(dashDir) > fs.statSync(index).mtimeMs;
+  if (!missing && !stale) return;
   const instructions = `  npm --prefix dashboard install && npm --prefix dashboard run build`;
   if (!allowBuild) {
-    console.warn(`[dashboard] UI not built (dashboard/dist missing). The API still works. To build the UI:\n${instructions}`);
+    console.warn(`[dashboard] UI ${missing ? 'not built (dashboard/dist missing)' : 'build is older than its sources'}. The API still works. To build the UI:\n${instructions}`);
     return;
   }
-  console.log('[dashboard] dashboard/dist is missing; building the UI (one-time)...');
+  console.log(missing ? '[dashboard] dashboard/dist is missing; building the UI (one-time)...' : '[dashboard] UI sources changed since the last build; rebuilding...');
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   const steps: string[][] = [];
   if (!fs.existsSync(path.join(dashDir, 'node_modules'))) steps.push(['--prefix', dashDir, 'install', '--no-audit', '--no-fund']);
