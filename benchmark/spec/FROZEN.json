@@ -1,0 +1,12 @@
+{
+  "frozenAt": "2026-11-14T22:07:21.850Z",
+  "note": "Reference spec and design are frozen. Do not edit these files during optimization experiments.",
+  "files": {
+    "api-contract.yaml": "a900adb4db9b1ba8cbfd46dbf1a9959462ad75ad219ac7d0d99cc90bc7095b6e",
+    "design-mobile.png": "2a1cc1e41c3134111656ac22656c793b38e283bab5f0c62f7cc37003c795eff7",
+    "design-tokens.md": "7eaa7a6e02df5154f8a01e0977edbba45f616054f9a1eefa8b7e5883d4e63043",
+    "design.png": "0ea59a6093590cd6b86e8b12722242b3d7bc268606054996fc5e3f677f47a671",
+    "fixtures.json": "ff307800ed8e9c4e82e88e5698260233d2bd767faeebdaff528bb16e59cb87dd",
+    "requirements.md": "2995484b85b2700269bec01a9158f6c201757222672f2a416b09dea68bc41a2c"
+  }
+}
