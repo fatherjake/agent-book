@@ -1,0 +1,12 @@
+{
+  "id": "experiments/001",
+  "parentId": "baseline",
+  "hypothesis": "About 20k tokens of fixed context are re-read on every call. 21 of the 23 built-in tool definitions are never used. Task, Cron*, Worktree, Monitor, Workflow, WebFetch and the others, plus the Skill tool and its 18-skill listing, all sit in the prefix on every call. Restricting the tool whitelist to Bash, Read, Edit and Write should shrink that prefix on every call without changing the workflow.",
+  "changeSummary": "Set claudeCode.tools to [\"Bash\",\"Read\",\"Edit\",\"Write\"] in config.json, keeping systemPromptMode \"append\". Nothing else changes.",
+  "changes": "--- a/config.json\n+++ b/config.json\n@@ -1,4 +1,4 @@\n {\n-  \"id\": \"baseline\",\n+  \"id\": \"experiments/001\",\n   \"description\": \"Claude Code baseline: the real Claude Code CLI (subscription auth via the host gateway), Sonnet 5.5, default tools, the checklist skill, a short appended system prompt.\",\n   \"backend\": \"claude-code\",\n@@ -15,5 +15,11 @@\n   },\n   \"claudeCode\": {\n-    \"systemPromptMode\": \"append\"\n+    \"systemPromptMode\": \"append\",\n+    \"tools\": [\n+      \"Bash\",\n+      \"Read\",\n+      \"Edit\",\n+      \"Write\"\n+    ]\n   },\n   \"limits\": {\n@@ -21,4 +27,5 @@\n     \"maxModelCalls\": 150,\n     \"maxRuntimeSec\": 2400\n-  }\n+  },\n+  \"parentId\": \"baseline\"\n }\n",
+  "createdAt": "2026-11-15T12:09:43.021Z",
+  "hash": "a8f6970694783b5dedf07d4955075681c088e2194d6c93a3f02bee9581d0bd7b",
+  "experimentId": "exp-0007",
+  "evidence": "Every run's init message lists 23 tools. Profiles for runs 5db97f, f7e79a and c283e0 show \"21/23 tool definitions loaded but never used; used: Bash, Read\" and \"fixed system+tools ≈19.8k/call (≈63% of total)\". Cache reads are 89% of tokens in run 5db97f (112k of 126k). Calls per run are 4-7, so the prefix is paid 4-7 times. Median run cost 199,998 tokens, with 6 calls at about 28-38k context each. The model only ever used Bash heredocs and Read, so no behaviour depends on the removed tools.",
+  "expectedSavings": "Assuming the 21 unused tool schemas plus the skill listing are about 6-9k tokens of the 19.8k fixed prefix, the saving is roughly 7k × 6 calls ≈ 40k tokens, or about 20% of the 200k median. That is comparable to the 30% run-to-run noise. The main risk is that the tools field is interpreted differently (for example, unknown names rejected). Edit and Write are kept to limit that risk. Losing the Skill tool means the unused checklist skill is unavailable, which is harmless."
+}

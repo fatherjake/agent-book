@@ -1,0 +1,31 @@
+{
+  "id": "experiments/003",
+  "description": "Claude Code baseline: the real Claude Code CLI (subscription auth via the host gateway), Sonnet 5.5, default tools, the checklist skill, a short appended system prompt.",
+  "backend": "claude-code",
+  "provider": "anthropic",
+  "model": "claude-sonnet-5-5",
+  "designDelivery": "inline-image",
+  "inlineSpecFiles": [
+    "requirements.md",
+    "api-contract.yaml",
+    "design-tokens.md"
+  ],
+  "context": {
+    "strategy": "none"
+  },
+  "claudeCode": {
+    "systemPromptMode": "replace",
+    "tools": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write"
+    ]
+  },
+  "limits": {
+    "maxTotalTokens": 3000000,
+    "maxModelCalls": 150,
+    "maxRuntimeSec": 2400
+  },
+  "parentId": "experiments/001"
+}
