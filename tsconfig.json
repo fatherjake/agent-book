@@ -10,6 +10,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["runner", "evaluator", "researcher", "scripts", "tests", "storage"],
+  "include": ["runner", "evaluator", "researcher", "scripts", "tests", "storage", "lab", "benchmark/tasks"],
   "exclude": ["node_modules", "benchmark/starter", "evaluator/reference-app", "dashboard", "results"]
 }

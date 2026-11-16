@@ -16,7 +16,8 @@
     "build:image": "tsx scripts/build-image.ts",
     "design:generate": "tsx scripts/generate-design.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "lab": "tsx lab/cli.ts"
   },
   "devDependencies": {
     "@playwright/mcp": "0.0.84",

@@ -57,6 +57,27 @@ export interface RunCodingAgentOptions {
   gatewayOptions?: Pick<StartGatewayOptions, 'upstreamUrl' | 'token'>;
   /** claude-code backend: replace the whole task prompt (smoke tests). Default: the benchmark task + inline spec files. */
   taskPrompt?: string;
+  /**
+   * git-diff tasks: a patch applied to /workspace and folded into the checkpoint commit BEFORE the checkpoint
+   * is recorded (e.g. the repo's skill files under test, a suggestion's edits, an injected bug). It is part of
+   * the starting state: it never shows up in workspace.patch, and git history does not reveal it.
+   */
+  workspaceOverlay?: string;
+}
+
+/** Apply and commit a workspace overlay (see RunCodingAgentOptions.workspaceOverlay). */
+export async function applyWorkspaceOverlay(sandbox: Pick<Sandbox, 'exec' | 'writeFile'>, patch: string): Promise<void> {
+  if (!patch.trim()) return;
+  const file = '/tmp/.frugal-overlay.patch';
+  await sandbox.writeFile(file, patch.endsWith('\n') ? patch : patch + '\n');
+  const r = await sandbox.exec(
+    `cd /workspace && git apply --binary --whitespace=nowarn ${file} && git add -A && ` +
+      // Folded into the checkpoint commit (same message, author and dates), so history stays one commit and
+      // `git show` / `git log -p` cannot reveal what the overlay added (e.g. an injected bug).
+      `GIT_COMMITTER_DATE='2000-01-01T00:00:00Z' git -c user.name=frugal -c user.email=frugal@localhost commit -q --amend --no-edit --no-verify --no-gpg-sign; rc=$?; rm -f ${file} 2>/dev/null; exit $rc`,
+    { timeoutSec: 120, cwd: '/workspace' },
+  );
+  if (r.exitCode !== 0) throw new Error(`workspace overlay did not apply (exit ${r.exitCode}): ${(r.stderr || r.stdout).trim().slice(0, 1500)}`);
 }
 
 /**
@@ -231,6 +252,10 @@ async function runCodingAgentInner(opts: RunCodingAgentOptions): Promise<CodingR
       const { createSandbox } = await import('./sandbox.js');
       sandbox = await createSandbox({ image: image.image, imageId: image.imageId, runId, role: 'coding', network: 'none', specDir, ...sbOpts });
     }
+    if (opts.workspaceOverlay) {
+      if (task.workspace.snapshot !== 'git-diff') throw new Error('workspaceOverlay needs a git-diff task');
+      await applyWorkspaceOverlay(sandbox, opts.workspaceOverlay);
+    }
     if (task.workspace.snapshot === 'git-diff') checkpoint = await recordCheckpoint(sandbox as unknown as import('./snapshot.js').SnapshotSandbox);
 
     const result = await runAgent({
@@ -402,6 +427,10 @@ async function runClaudeCodeBackend(opts: RunCodingAgentOptions, ctx: RunCtx): P
         specDir,
         ...sbOpts,
       });
+    }
+    if (opts.workspaceOverlay) {
+      if (task.workspace.snapshot !== 'git-diff') throw new Error('workspaceOverlay needs a git-diff task');
+      await applyWorkspaceOverlay(sandbox, opts.workspaceOverlay);
     }
     if (task.workspace.snapshot === 'git-diff') checkpoint = await recordCheckpoint(sandbox as unknown as import('./snapshot.js').SnapshotSandbox);
     const gatewayUrl = network?.gatewayUrl ?? gateway.containerUrl;

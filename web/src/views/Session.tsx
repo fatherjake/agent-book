@@ -1,13 +1,13 @@
-import { REPO } from '../mock';
-import { relChange, summarize } from '../stats';
-import { decide, href, useSessions } from '../store';
-import type { Session as SessionT, Suggestion } from '../types';
+import { paired, relChange, summarize } from '../stats';
+import { decide, href, useLab } from '../store';
+import type { Session as SessionT, Suggestion, Task } from '../types';
 import { Ago, Delta, Metrics, RunsTable, SessionStatus, SuggestionStatusBadge, summaryMetrics } from '../components/ui';
 
 export function Session({ id }: { id: string }) {
-  const session = useSessions().find((s) => s.id === id);
+  const { sessions, tasks } = useLab();
+  const session = sessions.find((s) => s.id === id);
   if (!session) return <NotFound what={`Session ${id}`} />;
-  const sum = summarize(session.runs, REPO.tasks);
+  const sum = summarize(session.runs, tasks);
   return (
     <main className="page">
       <nav className="crumbs">
@@ -16,6 +16,7 @@ export function Session({ id }: { id: string }) {
       <div className="page-head row">
         <h1 className="mono">{session.id}</h1>
         <SessionStatus status={session.status} />
+        {session.error && <span className="bad-text small">{session.error}</span>}
         <span className="dim">
           {session.skillsVersion} · <a href={href.repo()}>profile v{session.profileVersion}</a> · started <Ago iso={session.createdAt} />
         </span>
@@ -27,7 +28,7 @@ export function Session({ id }: { id: string }) {
             <h2>Runs</h2>
             <span className="dim small">The current skills on every task. Click a run for its acceptance criteria.</span>
           </div>
-          <RunsTable runs={session.runs} tasks={REPO.tasks} />
+          <RunsTable runs={session.runs} tasks={tasks} />
         </section>
         <section className="pane">
           <div className="pane-head">
@@ -36,9 +37,17 @@ export function Session({ id }: { id: string }) {
           </div>
           <div className="cards">
             {session.suggestions.map((g) => (
-              <SuggestionCard key={g.id} session={session} suggestion={g} />
+              <SuggestionCard key={g.id} session={session} suggestion={g} tasks={tasks} />
             ))}
-            {!session.suggestions.length && <p className="empty">No suggestions yet: the runs are still being analysed.</p>}
+            {!session.suggestions.length && (
+              <p className="empty">
+                {session.status === 'running'
+                  ? 'Suggestions are proposed once the runs finish.'
+                  : session.status === 'analysing'
+                    ? 'Analysing the runs…'
+                    : 'No suggestions for this session.'}
+              </p>
+            )}
           </div>
         </section>
       </div>
@@ -46,9 +55,10 @@ export function Session({ id }: { id: string }) {
   );
 }
 
-function SuggestionCard({ session, suggestion: g }: { session: SessionT; suggestion: Suggestion }) {
-  const base = summarize(session.runs, REPO.tasks);
-  const sum = summarize(g.runs, REPO.tasks);
+function SuggestionCard({ session, suggestion: g, tasks }: { session: SessionT; suggestion: Suggestion; tasks: Task[] }) {
+  const base = summarize(session.runs, tasks);
+  const sum = summarize(g.runs, tasks);
+  const pr = paired(session.runs, g.runs, tasks);
   const hasData = sum.done > 0;
   return (
     <article className="card" onClick={() => (location.hash = href.suggestion(session.id, g.id))}>
@@ -60,19 +70,26 @@ function SuggestionCard({ session, suggestion: g }: { session: SessionT; suggest
       </div>
       <p className="card-desc">{g.description}</p>
       <div className="card-foot">
-        <span className="mono dim small">{g.file.split('/').slice(-2).join('/')}</span>
+        <span className="mono dim small">
+          {g.file
+            .split(', ')
+            .map((x) => x.split('/').slice(-2).join('/'))
+            .join(' · ')}
+        </span>
         {hasData ? (
           <span className="card-deltas">
             <span>
-              criteria <Delta value={sum.criteria !== null && base.criteria !== null ? sum.criteria - base.criteria : null} kind="pts" />
+              criteria <Delta value={sum.criteria !== null && base.criteria !== null ? sum.criteria - base.criteria : null} kind="pts" interval={pr.criteria} />
             </span>
             <span>
-              tokens <Delta value={relChange(base.tokens, sum.tokens)} kind="rel" lowerIsBetter />
+              tokens <Delta value={relChange(base.tokens, sum.tokens)} kind="rel" lowerIsBetter interval={pr.tokens} />
             </span>
             <span>
-              time <Delta value={relChange(base.durationMs, sum.durationMs)} kind="rel" lowerIsBetter />
+              time <Delta value={relChange(base.durationMs, sum.durationMs)} kind="rel" lowerIsBetter interval={pr.time} />
             </span>
-            <span className="dim">{sum.done} runs{sum.running ? ` · ${sum.running} running` : ''}</span>
+            <span className="dim" title="Paired with the session's runs (same task, same seed). ~ = within noise.">
+              {pr.pairs} paired runs{sum.pending ? ` · ${sum.pending} running` : ''}
+            </span>
           </span>
         ) : (
           <span className="dim small">{g.status === 'proposed' ? 'Not tested yet' : 'Waiting for runs'}</span>
@@ -80,10 +97,10 @@ function SuggestionCard({ session, suggestion: g }: { session: SessionT; suggest
       </div>
       {g.status === 'tested' && (
         <div className="card-actions" onClick={(e) => e.stopPropagation()}>
-          <button className="btn btn-primary" onClick={() => decide(session.id, g.id, 'accepted')}>
+          <button className="btn btn-primary" onClick={() => decide(g.id, 'accepted')}>
             Accept
           </button>
-          <button className="btn" onClick={() => decide(session.id, g.id, 'rejected')}>
+          <button className="btn" onClick={() => decide(g.id, 'rejected')}>
             Reject
           </button>
         </div>

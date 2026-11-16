@@ -1,53 +1,78 @@
 import * as f from '../format';
-import { REPO, REPO_PROFILE } from '../mock';
-import { href } from '../store';
-import type { StepStatus, Task } from '../types';
+import { approveTask, href, useLab } from '../store';
+import type { RepoProfile, StepStatus, Task } from '../types';
 import { Ago, Badge, KindTag, Metrics } from '../components/ui';
 
 const STEP_MARK: Record<StepStatus, string> = { ok: '✓', warn: '!', fail: '✕', running: '…', pending: '·' };
 
 export function Repo() {
-  const p = REPO_PROFILE;
-  const okSteps = p.setup.filter((s) => s.status === 'ok' || s.status === 'warn').length;
-  const warnSteps = p.setup.filter((s) => s.status === 'warn').length;
-  const chosen = p.activation.probes.find((x) => x.chosen)!;
-  const suite = REPO.tasks.filter((t) => !t.heldOut);
-  const held = REPO.tasks.filter((t) => t.heldOut);
+  const { repo, profile, tasks } = useLab();
+  if (!repo) return null;
+  const suite = tasks.filter((t) => !t.heldOut);
+  const held = tasks.filter((t) => t.heldOut);
   return (
     <main className="page">
       <nav className="crumbs">
         <a href={href.sessions()}>Sessions</a> <span>/</span> <span>Repo</span>
       </nav>
       <div className="page-head row">
-        <h1>{REPO.name}</h1>
-        <a className="dim" href={REPO.url} target="_blank" rel="noreferrer">
-          {REPO.url.replace('https://', '')}
+        <h1>{repo.name}</h1>
+        <a className="dim" href={repo.url} target="_blank" rel="noreferrer">
+          {repo.url.replace('https://', '')}
         </a>
-        <span className="mono dim">@ {REPO.commit}</span>
-        <Badge tone="good">Ready</Badge>
+        <span className="mono dim">@ {repo.commit.slice(0, 7)}</span>
+        {profile ? <Badge tone="good">Ready</Badge> : <Badge tone="live">Setup pending</Badge>}
         <span className="spacer" />
-        <span className="dim small">
-          Profile v{p.version} · evaluated <Ago iso={p.evaluatedAt} />
-        </span>
-        <button className="btn" disabled title="Mockup">
-          Re-run setup
-        </button>
+        {profile && (
+          <span className="dim small">
+            Profile v{profile.version} · evaluated <Ago iso={profile.evaluatedAt} />
+          </span>
+        )}
       </div>
       <p className="dim lead">
         Setup builds a sandbox where the repo's tests pass offline. Evaluation reads the repo the way a new engineer would and works out how
         its skills have to be invoked to fire, so every session tests the skills doing their job.
       </p>
+      {profile ? (
+        <ProfileSections profile={profile} suiteCount={suite.length} heldCount={held.length} />
+      ) : (
+        <div className="finding">
+          <span className="finding-label">Setup has not run for this repo</span>
+          Sessions use the built-in environment and activation recipe for now. Setup will record the verified environment, the instruction
+          sources, the skill map and the measured activation recipe here.
+        </div>
+      )}
 
+      <section className="block">
+        <h2>Task suite</h2>
+        <p className="dim small">Sessions run every approved task. Held-out tasks are never used to propose suggestions, only to confirm them.</p>
+        <TaskTable tasks={suite} />
+        {held.length > 0 && (
+          <>
+            <h3 className="subhead">Held out</h3>
+            <TaskTable tasks={held} />
+          </>
+        )}
+      </section>
+    </main>
+  );
+}
+
+function ProfileSections({ profile: p, suiteCount, heldCount }: { profile: RepoProfile; suiteCount: number; heldCount: number }) {
+  const okSteps = p.setup.filter((s) => s.status === 'ok' || s.status === 'warn').length;
+  const warnSteps = p.setup.filter((s) => s.status === 'warn').length;
+  const chosen = p.activation.probes.find((x) => x.chosen);
+  return (
+    <>
       <Metrics
         items={[
           { label: 'Setup', value: `${okSteps}/${p.setup.length}`, sub: warnSteps ? `steps passed · ${warnSteps} warning` : 'steps passed' },
-          { label: 'Baseline', value: 'Green', sub: '116 + 40 tests pass' },
-          { label: 'Skills', value: '12', sub: `${p.skills.length} mapped to task types` },
-          { label: 'Activation', value: `${chosen.fired}/${chosen.total}`, sub: chosen.recipe.toLowerCase() },
-          { label: 'Task suite', value: String(suite.length), sub: `+ ${held.length} held out` },
+          { label: 'Commands', value: `${p.commands.filter((c) => c.verified).length}/${p.commands.length}`, sub: 'verified' },
+          { label: 'Skills', value: String(p.skills.length), sub: 'mapped to task types' },
+          { label: 'Activation', value: chosen ? `${chosen.fired}/${chosen.total}` : '—', sub: chosen ? chosen.recipe.toLowerCase() : 'not measured' },
+          { label: 'Task suite', value: String(suiteCount), sub: `+ ${heldCount} held out` },
         ]}
       />
-
       <div className="repo-grid">
         <section className="block">
           <h2>1 · Setup</h2>
@@ -189,15 +214,7 @@ export function Repo() {
 
       <div className="repo-grid">
         <section className="block">
-          <h2>6 · Task suite</h2>
-          <TaskTable tasks={suite} />
-          <h3 className="subhead">Held out</h3>
-          <p className="dim small">Never used to propose suggestions; only to confirm that accepted ones carry over.</p>
-          <TaskTable tasks={held} />
-        </section>
-
-        <section className="block">
-          <h2>7 · Sandbox conflicts</h2>
+          <h2>6 · Sandbox conflicts</h2>
           <table className="table">
             <thead>
               <tr>
@@ -216,13 +233,14 @@ export function Repo() {
           </table>
         </section>
       </div>
-    </main>
+    </>
   );
 }
 
 const SOURCE_LABEL = { commit: 'From history', injected: 'Injected bug', invented: 'Written' } as const;
 
 function TaskTable({ tasks }: { tasks: Task[] }) {
+  if (!tasks.length) return <p className="empty">No tasks.</p>;
   return (
     <table className="table">
       <thead>
@@ -230,6 +248,7 @@ function TaskTable({ tasks }: { tasks: Task[] }) {
           <th>Task</th>
           <th>Source</th>
           <th className="r">Criteria</th>
+          <th className="r">Used by sessions</th>
         </tr>
       </thead>
       <tbody>
@@ -244,6 +263,20 @@ function TaskTable({ tasks }: { tasks: Task[] }) {
             </td>
             <td className="r num" title={t.criteria.map((c) => '• ' + c.label).join('\n')}>
               {t.criteria.length}
+            </td>
+            <td className="r">
+              {t.approved ? (
+                <span className="nowrap">
+                  <Badge tone="good">Approved</Badge>{' '}
+                  <button className="btn btn-small" onClick={() => void approveTask(t.id, false)}>
+                    Remove
+                  </button>
+                </span>
+              ) : (
+                <button className="btn btn-small btn-primary" onClick={() => void approveTask(t.id, true)}>
+                  Approve
+                </button>
+              )}
             </td>
           </tr>
         ))}

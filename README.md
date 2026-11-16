@@ -29,6 +29,12 @@ research dev task (`configs/research.json` `devTask`); its reference implementat
 > 161,546 coding tokens** (2026-11-15). The api backend (`baseline-api`) has still never called a real
 > model. See [Status](#status-what-is-and-isnt-verified).
 
+
+> **New direction: the lab.** Frugal is becoming a tool that improves a repository's *skill files* with
+> evidence: run the skills on real tasks, propose edits, test each with paired runs, and let a human
+> accept them. See [docs/LAB.md](docs/LAB.md) (`npm run lab -- session`, UI via `npm run lab -- serve`).
+> The token benchmark below is the foundation it is built on.
+
 ---
 
 ## Architecture

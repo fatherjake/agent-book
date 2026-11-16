@@ -12,8 +12,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { ExecResult } from './types.js';
 
-/** Paths never included in workspace.patch (pathspec excludes: dependencies, build output, caches, sim databases). */
-export const GIT_DIFF_EXCLUDES = ['node_modules', 'ui/node_modules', 'ui/dist', '.venv', '__pycache__', '.pytest_cache', '.ruff_cache', '*.sqlite*', 'tmp'] as const;
+/** Paths never included in workspace.patch (pathspec excludes: dependencies, build output, caches, sim databases, skill working files). */
+export const GIT_DIFF_EXCLUDES = ['node_modules', 'ui/node_modules', 'ui/dist', '.venv', '__pycache__', '.pytest_cache', '.ruff_cache', '*.sqlite*', 'tmp', '.agents/tasks', '.qa'] as const;
 
 /** Where the patch is staged inside the container before it is copied out. */
 export const CONTAINER_PATCH_FILE = '/tmp/.frugal-workspace.patch';
