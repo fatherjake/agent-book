@@ -9,3 +9,4 @@ dashboard/dist/
 # Hidden reference implementations of the tiny-* tasks: never published (the repo is public and the
 # features must stay out of model training data). Keep a private backup; see benchmark/tasks/tiny/README.md.
 evaluator/tasks/*/reference.diff
+web/dist/

@@ -71,7 +71,7 @@ describe('banned terms', () => {
 
   it('the shipped configs contain no banned term of the registry', () => {
     const terms = allBannedTerms();
-    for (const dir of ['baseline', 'experiments/001', 'experiments/002', 'experiments/003']) {
+    for (const dir of ['baseline', 'baseline-api']) {
       const r = guardConfig(join('configs', dir), { corpus: false, bannedTerms: terms });
       expect(rules(r).filter((x) => x === 'banned-term')).toEqual([]);
     }
