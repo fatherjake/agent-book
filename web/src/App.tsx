@@ -1,9 +1,18 @@
 import { useEffect, useState } from 'react';
+import { ChatPane } from './components/ChatPane';
 import { href, parseRoute, useLab } from './store';
 import { Repo } from './views/Repo';
 import { Session } from './views/Session';
 import { Sessions } from './views/Sessions';
 import { Suggestion } from './views/Suggestion';
+
+/** Which chat a page gets: one per page (sessions list, repo, each session, each suggestion). */
+function chatTarget(route: ReturnType<typeof parseRoute>): { chatKey: string; label: string } {
+  if (route.page === 'repo') return { chatKey: 'repo', label: 'the repo' };
+  if (route.page === 'session') return { chatKey: route.id, label: route.id };
+  if (route.page === 'suggestion') return { chatKey: route.sid, label: route.sid };
+  return { chatKey: 'sessions', label: 'the sessions' };
+}
 
 export function App() {
   const lab = useLab();
@@ -64,6 +73,7 @@ export function App() {
           {route.page === 'repo' && <Repo />}
           {route.page === 'session' && <Session id={route.id} />}
           {route.page === 'suggestion' && <Suggestion id={route.id} sid={route.sid} />}
+          <ChatPane {...chatTarget(route)} />
         </>
       )}
     </>

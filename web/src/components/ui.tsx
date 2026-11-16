@@ -58,27 +58,25 @@ export function Ago({ iso }: { iso: string }) {
 }
 
 /**
- * A change between the session's runs and a suggestion's runs. `lowerIsBetter` for costs; changes
- * smaller than `noise` are shown neutral.
+ * A change between the session's runs and a suggestion's runs. The sign decides the colour: positive
+ * green, negative red, zero grey. `~` marks a change whose paired 95% range includes zero (within noise).
  */
 export function Delta({
   value,
   kind,
-  lowerIsBetter = false,
-  noise = 0.03,
   interval,
 }: {
   value: number | null;
   kind: 'rel' | 'pts';
+  /** Kept for call sites; colour is by sign only. */
   lowerIsBetter?: boolean;
-  noise?: number;
-  /** Paired 95% range; when it includes zero the change is shown as noise. */
+  /** Paired 95% range; when it includes zero the change is marked as within noise. */
   interval?: Interval | null;
 }) {
   if (value === null || !Number.isFinite(value)) return <span className="delta">—</span>;
-  const good = lowerIsBetter ? value < 0 : value > 0;
+  const shown = Math.round(value * 100);
+  const tone = shown > 0 ? 'up' : shown < 0 ? 'down' : 'zero';
   const uncertain = interval ? interval.inconclusive : false;
-  const tone = Math.abs(value) < noise || uncertain ? 'flat' : good ? 'good' : 'bad';
   const fmt = (v: number) => (kind === 'rel' ? `${v > 0 ? '+' : ''}${(v * 100).toFixed(0)}%` : `${v > 0 ? '+' : ''}${(v * 100).toFixed(0)} pts`);
   const title = interval
     ? Number.isFinite(interval.lo)

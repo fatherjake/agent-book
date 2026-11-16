@@ -35,6 +35,16 @@ interface Step {
 }
 
 const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+/** The line that summarises a test run, else the last non-empty line. */
+const summaryLine = (s: string) => {
+  const clean = s.replace(/\x1b\[[0-9;]*m/g, '');
+  // Most specific first: vitest's "Tests N passed" before its "Test Files" line, pytest, vite, ruff.
+  for (const re of [/^\s*Tests\s+\d+ passed.*$/m, /^.*\b\d+ (passed|failed)\b.*$/m, /^.*built in [\d.]+m?s.*$/m, /^.*\d+ files? would be reformatted.*$/m]) {
+    const m = clean.match(re);
+    if (m) return m[0].trim().replace(/\s+/g, ' ').slice(0, 160);
+  }
+  return lastLine(clean);
+};
 const lastLine = (s: string) =>
   s
     .replace(/\x1b\[[0-9;]*m/g, '')
@@ -108,8 +118,8 @@ export async function runSetup(db: LabDb, repoId: string, opts: SetupOptions): P
   const image = await step('Build test image', async () => {
     const info = await ensureTaskImage(bench);
     const { execFileSync } = await import('node:child_process');
-    const bytes = Number(execFileSync('docker', ['image', 'inspect', '--format', '{{.Size}}', info.baseImage], { encoding: 'utf8' }).trim());
-    return { value: info.baseImage, detail: `${(bytes / 1e9).toFixed(2)} GB · dependencies baked in, runs offline` };
+    const size = execFileSync('docker', ['images', '--format', '{{.Size}}', info.baseImage], { encoding: 'utf8' }).trim().split('\n')[0];
+    return { value: info.baseImage, detail: `${size} · dependencies baked in, runs offline` };
   });
   const overlay = await step('Install skills', async () => {
     const p = overlayPatch(repo.skills);
@@ -118,7 +128,7 @@ export async function runSetup(db: LabDb, repoId: string, opts: SetupOptions): P
   });
 
   // ---- the repo's own commands, in a hardened container with the skills installed ------------------------
-  const commands: { purpose: string; command: string; source: string; verified: boolean; result: string }[] = [];
+  const commands: { purpose: string; command: string; source: string; verified: boolean; required: boolean; result: string }[] = [];
   if (image && overlay) {
     let c: TinyEvalContainer | null = null;
     await step('Run the repo commands', async () => {
@@ -133,14 +143,25 @@ export async function runSetup(db: LabDb, repoId: string, opts: SetupOptions): P
         const res = await c.exec(cmd.command, { timeoutMs: 600_000 });
         const secs = ((Date.now() - t0) / 1000).toFixed(0);
         const ok = res.code === 0;
-        const tail = lastLine(cmd.purpose.startsWith('Health') ? res.stdout : res.stdout || res.stderr);
-        commands.push({ purpose: cmd.purpose, command: cmd.command, source: cmd.source, verified: ok, result: ok ? `${tail || 'ok'} (${secs}s)` : `exit ${res.code}: ${lastLine(res.stderr || res.stdout)}` });
+        const tail = cmd.purpose.startsWith('Health') ? lastLine(res.stdout).slice(0, 60) : summaryLine(res.stdout + '\n' + res.stderr);
+        const required = cmd.required !== false;
+        commands.push({
+          purpose: cmd.purpose,
+          command: cmd.command,
+          source: cmd.source,
+          verified: ok,
+          required,
+          result: ok ? `${tail || 'ok'} (${secs}s)` : `${required ? '' : 'fails before any change: '}${summaryLine(res.stdout + '\n' + res.stderr) || `exit ${res.code}`}`,
+        });
       }
-      const failed = commands.filter((x) => !x.verified);
+      const failed = commands.filter((x) => !x.verified && x.required);
+      const preexisting = commands.filter((x) => !x.verified && !x.required);
       return {
         value: null,
-        status: failed.length ? 'fail' : 'ok',
-        detail: failed.length ? `${failed.length} of ${commands.length} commands failed: ${failed.map((x) => x.purpose).join(', ')}` : `${commands.length} commands pass with the skills installed`,
+        status: failed.length ? 'fail' : preexisting.length ? 'warn' : 'ok',
+        detail: failed.length
+          ? `${failed.length} required command(s) failed: ${failed.map((x) => x.purpose).join(', ')}`
+          : `${commands.length - preexisting.length} of ${commands.length} commands pass with the skills installed${preexisting.length ? `; pre-existing failure, graded relative to this baseline: ${preexisting.map((x) => x.purpose).join(', ')}` : ''}`,
       };
     });
     await (c as TinyEvalContainer | null)?.stop().catch(() => undefined);
@@ -190,7 +211,12 @@ export async function runSetup(db: LabDb, repoId: string, opts: SetupOptions): P
   // ---- activation probes ------------------------------------------------------------------------------------
   const probes: { recipe: string; id: string; example: string; fired: number; total: number; chosen: boolean }[] = [];
   let chosenId: string | null = null;
-  if (opts.probes > 0 && overlay) {
+  const previous = db.latestProfile(repoId);
+  if (opts.probes === 0 && previous?.activation?.probes?.length) {
+    probes.push(...previous.activation.probes);
+    chosenId = previous.activation.chosenId ?? null;
+    steps.push({ label: 'Measure skill activation', status: 'ok', detail: `reused from profile v${previous.version} (no new probes)`, durationMs: 0 });
+  } else if (opts.probes > 0 && overlay) {
     await step('Measure skill activation', async () => {
       for (const r of repo.recipes) probes.push({ recipe: r.label, id: r.id, example: r.wrap(repo.probeTask).slice(0, 140), fired: 0, total: 0, chosen: false });
       const jobs = repo.recipes.flatMap((r) => Array.from({ length: opts.probes }, (_, k) => ({ r, k })));
@@ -231,7 +257,7 @@ export async function runSetup(db: LabDb, repoId: string, opts: SetupOptions): P
   const finding = !probes.length
     ? `Activation not measured yet (run \`npm run lab -- setup --probes 3\`). Sessions use: ${repo.recipes.find((r) => r.id === repo.defaultRecipe)!.label}.`
     : plain && chosen && chosen.id !== 'plain'
-      ? `With the task prompt alone the skills fired in ${plain.fired}/${plain.total} probes; "${chosen.recipe}" fired in ${chosen.fired}/${chosen.total}, so sessions use it. Making the skills fire without being named is a candidate suggestion.`
+      ? `With the task prompt alone the skills fired in ${plain.fired}/${plain.total} probes; with "${chosen.recipe.replace(/^Prompt \+ /, '').replace(/"/g, '')}" they fired in ${chosen.fired}/${chosen.total}, so sessions use it. Making the skills fire without being named is a candidate suggestion.`
       : `The skills fire reliably${chosen ? ` (${chosen.fired}/${chosen.total})` : ''} with the task prompt alone.`;
 
   const version = db.saveProfile(repoId, {

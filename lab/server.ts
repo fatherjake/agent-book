@@ -5,10 +5,12 @@
  *   GET  /api/repos/:repo/sessions           sessions with their runs and suggestions (each with its runs)
  *   POST /api/suggestions/:id/decision       { "status": "accepted" | "rejected" | "tested" }
  *   POST /api/tasks/:id/approval             { "approved": true | false }
+ *   GET|POST /api/chat/:page[/stop]          chat pane about a page (lab/chat.ts): 'sessions', 'repo', a session or suggestion id
  */
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, join, normalize } from 'node:path';
+import { createChatHandler, isLoopback } from './chat.js';
 import { REPO_ROOT } from '../runner/env.js';
 import { LabDb, type RunRow } from './db.js';
 
@@ -61,12 +63,15 @@ function send(res: ServerResponse, code: number, data: unknown) {
   res.end(JSON.stringify(data));
 }
 
-export function startServer(opts: { port: number; host?: string; dbPath?: string }) {
+export function startServer(opts: { port: number; host?: string; dbPath?: string; repoId?: string }) {
   const db = new LabDb(opts.dbPath);
+  const host = opts.host ?? '127.0.0.1';
+  const chat = createChatHandler({ db, repoId: opts.repoId ?? 'tiny', repoRoot: REPO_ROOT, stateDir: join(REPO_ROOT, 'results', 'lab', 'chats'), enabled: isLoopback(host) });
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
     const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
     try {
+      if (parts[0] === 'api' && parts[1] === 'chat') return await chat(req, res, parts.slice(2));
       if (parts[0] === 'api') {
         if (req.method === 'GET' && parts[1] === 'repos' && parts[2] && !parts[3]) {
           const p = repoPayload(db, parts[2]);
@@ -103,6 +108,6 @@ export function startServer(opts: { port: number; host?: string; dbPath?: string
       send(res, 500, { error: String((e as Error)?.message ?? e) });
     }
   });
-  server.listen(opts.port, opts.host ?? '127.0.0.1');
+  server.listen(opts.port, host);
   return { server, db };
 }

@@ -38,6 +38,8 @@ export interface EnvCommandSpec {
   command: string;
   /** Where it comes from in the repo (shown on the repo page). */
   source: string;
+  /** Must pass at the pinned commit for setup to succeed (default true). Others failing are recorded as pre-existing. */
+  required?: boolean;
 }
 
 export interface LabRepo {
@@ -79,7 +81,7 @@ export const REPOS: Record<string, LabRepo> = {
       { purpose: 'Test (Python)', command: '.venv/bin/python -m pytest -q -p no:cacheprovider', source: 'AGENTS.md › Commands (uv run pytest)' },
       { purpose: 'Test (UI)', command: 'cd ui && npx vitest run --reporter=dot', source: 'README › Run the tests (npm test)' },
       { purpose: 'Build (UI)', command: 'cd ui && npm run build', source: 'ui/package.json' },
-      { purpose: 'Lint and line limit', command: '.venv/bin/ruff check . && .venv/bin/ruff format --check . && .venv/bin/python scripts/check_loc.py', source: 'AGENTS.md › Commands' },
+      { purpose: 'Lint and line limit', command: '.venv/bin/ruff check . && .venv/bin/ruff format --check . && .venv/bin/python scripts/check_loc.py', source: 'AGENTS.md › Commands', required: false },
       { purpose: 'Run (sim + UI)', command: '/opt/frugal/task/app start --no-build --bots 5', source: 'README › Run the sim / Run the UI' },
       { purpose: 'Health check', command: 'curl -sf http://127.0.0.1:8000/status && curl -sf -o /dev/null http://127.0.0.1:3000/', source: '.agents/skills/verify-tiny › Doctor' },
     ],
