@@ -33,3 +33,21 @@ far closer to the reference than variant A, so the gate was raised to **75**
   presentation choices (variant A) don't fail them.
 * `ui.depth.live_sim` uses the real sim with 20 bots (no pinned data).
 * The page may only reach the app's own origin; everything else is aborted.
+
+## Structural visual metric (2026-11-16)
+
+The pixel-level score proved too literal: two lab runs whose charts look identical to the design scored
+53 and 59 because the chart was drawn 3-4 px taller/offset, while the session's own runs sat at 78-86,
+just above the gate. The visual score is now structural (colour layout at 1/6 resolution + SSIM at scales
+8 and 16, see visual.ts); the pixel-level score is kept in the report details for reference.
+
+| Screenshots | Pixel-level | Structural |
+|---|---|---|
+| reference | 100 | 100 |
+| 12 lab runs (sess-0001 and its suggestions) | 53 – 90 | 86 – 98 |
+| the two runs that look identical to the design | 53, 59 | 86, 87 |
+| variant A (follows the spec, different details) | 64 | 85 |
+| variant B (off-design colours, no fills) | 38 | 65 |
+
+Gate unchanged at **75**: between off-design (65) and every faithful implementation (85+). Existing runs
+were re-graded from their saved screenshots (`npm run lab -- regrade`).

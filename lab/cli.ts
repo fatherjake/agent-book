@@ -5,6 +5,7 @@
  *                                       run the current skills on the task suite, analyse, test the top suggestions
  *   resume  --session <id>              continue a session from its next unfinished phase (runs, analysis, testing)
  *   setup   [--repo tiny] [--probes 3]  set up and evaluate the repo (profile for the repo page; probes cost tokens)
+ *   regrade                             re-score the visual design criterion of finished runs from their saved screenshots
  *   serve   [--port 5181]                                          API + web UI (build it first: npm --prefix web run build)
  *   status  [--repo tiny]                                          sessions and their runs, as text
  */
@@ -72,6 +73,11 @@ async function main() {
     for (const s of p.setup) console.log(`  ${s.status.padEnd(4)} ${s.label}: ${s.detail}`);
     return;
   }
+  if (cmd === 'regrade') {
+    const { regradeVisual } = await import('./regrade.js');
+    for (const line of await regradeVisual(db)) console.log(line);
+    return;
+  }
   if (cmd === 'status') {
     registerRepo(db, values.repo!);
     for (const s of db.listSessions(values.repo)) {
@@ -81,7 +87,7 @@ async function main() {
     }
     return;
   }
-  console.error('usage: npm run lab -- setup|session|resume|serve|status [--repo tiny] [--runs-per-task N] [--concurrency N] [--port N]');
+  console.error('usage: npm run lab -- setup|session|resume|regrade|serve|status [--repo tiny] [--runs-per-task N] [--concurrency N] [--port N]');
   process.exitCode = 2;
 }
 
