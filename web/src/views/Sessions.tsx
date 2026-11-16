@@ -11,7 +11,7 @@ export function Sessions() {
       <div className="page-head">
         <h1>Sessions</h1>
         <p className="dim">
-          Each session runs the current skills on {REPO.tasks.length} tasks, then proposes and tests changes to the skill files.
+          Each session runs the current skills on {REPO.tasks.filter((t) => !t.heldOut).length} tasks, then proposes and tests changes to the skill files.
         </p>
       </div>
       <table className="table sessions">
@@ -19,6 +19,7 @@ export function Sessions() {
           <tr>
             <th>Session</th>
             <th>Status</th>
+            <th>Profile</th>
             <th>Skills</th>
             <th className="r">Runs</th>
             <th className="r">Suggestions</th>
@@ -43,6 +44,11 @@ export function Sessions() {
                 </td>
                 <td>
                   <SessionStatus status={s.status} />
+                </td>
+                <td>
+                  <a className="dim" href={href.repo()} onClick={(e) => e.stopPropagation()}>
+                    v{s.profileVersion}
+                  </a>
                 </td>
                 <td className="dim">{s.skillsVersion}</td>
                 <td className="r num">{sum.runs}</td>

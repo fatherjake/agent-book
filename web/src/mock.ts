@@ -2,7 +2,7 @@
  * MOCK DATA for the UI mockup. Deterministic: the same numbers on every load; only the timestamps
  * are relative to the time the page loads. Replace with the real API once the backend exists.
  */
-import type { Repo, Run, Session, Suggestion, SuggestionStatus, Task } from './types';
+import type { Repo, RepoProfile, Run, Session, Suggestion, SuggestionStatus, Task } from './types';
 
 const SKILLS = '.agents/skills/saiyan';
 
@@ -10,6 +10,8 @@ export const TASKS: Task[] = [
   {
     id: 'depth-chart',
     kind: 'feature',
+    source: { type: 'invented', ref: 'written for the suite' },
+    heldOut: false,
     title: 'Add a depth chart tab to the order book card',
     criteria: [
       { id: 'tab', label: 'Depth tab after Order Book; Order Book stays the default' },
@@ -24,6 +26,8 @@ export const TASKS: Task[] = [
   {
     id: 'funding-sign',
     kind: 'fix',
+    source: { type: 'injected', ref: 'bug injected into core/state.py' },
+    heldOut: false,
     title: 'Funding payments have the wrong sign for short positions',
     criteria: [
       { id: 'repro', label: 'A failing test reproduces the bug before the fix' },
@@ -36,6 +40,8 @@ export const TASKS: Task[] = [
   {
     id: 'candle-gap',
     kind: 'fix',
+    source: { type: 'injected', ref: 'bug injected into core/store.py' },
+    heldOut: false,
     title: 'Candle chart shows a gap after the sim restarts',
     criteria: [
       { id: 'repro', label: 'The gap is reproduced from a restarted sim' },
@@ -47,6 +53,8 @@ export const TASKS: Task[] = [
   {
     id: 'split-api',
     kind: 'refactor',
+    source: { type: 'invented', ref: 'written for the suite' },
+    heldOut: false,
     title: 'Move the history routes out of core/api.py',
     criteria: [
       { id: 'moved', label: 'History routes live in their own module' },
@@ -54,6 +62,31 @@ export const TASKS: Task[] = [
       { id: 'loc', label: 'Every file stays under the 1,000-line limit' },
       { id: 'dead', label: 'No compatibility layer or dead code left behind' },
       { id: 'lint', label: 'ruff check and format pass' },
+    ],
+  },
+  {
+    id: 'order-preview',
+    kind: 'feature',
+    title: 'Show an order preview before submitting',
+    source: { type: 'commit', ref: 'da03da6 Extract order preview' },
+    heldOut: true,
+    criteria: [
+      { id: 'preview', label: 'Preview shows size, price, notional and fee before submit' },
+      { id: 'update', label: 'Preview updates as the form changes' },
+      { id: 'tests', label: 'Preview maths has unit tests' },
+      { id: 'build', label: 'Build passes, no test regressions' },
+    ],
+  },
+  {
+    id: 'domain-hooks',
+    kind: 'refactor',
+    title: 'Split the UI data hooks by domain',
+    source: { type: 'commit', ref: 'a4a6a9b Split UI domain hooks' },
+    heldOut: true,
+    criteria: [
+      { id: 'split', label: 'Market, account and order hooks live in separate files' },
+      { id: 'same', label: 'UI behaviour unchanged (all UI tests pass)' },
+      { id: 'dead', label: 'Old hook removed, no compatibility layer' },
     ],
   },
 ];
@@ -89,6 +122,8 @@ const PROFILE: Record<string, { tokens: number; spread: number; minutes: number;
   'depth-chart': { tokens: 260_000, spread: 0.6, minutes: 3.5, met: { tab: 0.95, axis: 0.8, tooltip: 0.6, live: 0.7, empty: 0.85, tests: 0.55, build: 0.95 } },
   'funding-sign': { tokens: 140_000, spread: 0.4, minutes: 2, met: { repro: 0.45, shorts: 0.85, longs: 0.9, regress: 0.9, scope: 0.7 } },
   'candle-gap': { tokens: 190_000, spread: 0.5, minutes: 2.8, met: { repro: 0.35, fill: 0.65, regress: 0.9, scope: 0.75 } },
+  'order-preview': { tokens: 180_000, spread: 0.4, minutes: 2.5, met: { preview: 0.8, update: 0.7, tests: 0.5, build: 0.95 } },
+  'domain-hooks': { tokens: 170_000, spread: 0.4, minutes: 2.2, met: { split: 0.9, same: 0.85, dead: 0.6 } },
   'split-api': { tokens: 210_000, spread: 0.45, minutes: 3, met: { moved: 0.95, same: 0.8, loc: 0.6, dead: 0.5, lint: 0.85 } },
 };
 
@@ -130,7 +165,7 @@ function runSet(seed: string, pairGroup: string, perTask: number, startMinAgo: n
   const out: Run[] = [];
   let i = 0;
   for (let k = 0; k < perTask; k++)
-    for (const t of TASKS) {
+    for (const t of TASKS.filter((x) => !x.heldOut)) {
       const at = startMinAgo - i * 2;
       out.push(makeRun(`${seed}/${t.id}/${k}`, `${pairGroup}/${t.id}/${k}`, t, Math.max(at, 0), effect, i >= runningFrom ? 'running' : 'done'));
       i++;
@@ -243,6 +278,7 @@ export const SESSIONS: Session[] = [
     id: 'sess-0003',
     createdAt: ago(42),
     status: 'running',
+    profileVersion: 2,
     skillsVersion: 'saiyan @ f14513a + 1 accepted',
     runs: runSet('s3', 's3', 3, 40),
     suggestions: [
@@ -255,6 +291,7 @@ export const SESSIONS: Session[] = [
     id: 'sess-0002',
     createdAt: ago(60 * 26),
     status: 'done',
+    profileVersion: 2,
     skillsVersion: 'saiyan @ f14513a',
     runs: runSet('s2', 's2', 3, 60 * 26 - 2),
     suggestions: [
@@ -267,6 +304,7 @@ export const SESSIONS: Session[] = [
     id: 'sess-0001',
     createdAt: ago(60 * 24 * 3),
     status: 'done',
+    profileVersion: 1,
     skillsVersion: 'saiyan @ f14513a',
     runs: runSet('s1', 's1', 2, 60 * 24 * 3 - 2),
     suggestions: [
@@ -275,3 +313,62 @@ export const SESSIONS: Session[] = [
     ],
   },
 ];
+
+/** Setup + repo evaluation for tiny. Commands, counts and timings are the ones measured on the real repo. */
+export const REPO_PROFILE: RepoProfile = {
+  version: 2,
+  evaluatedAt: ago(60 * 24 * 3 + 50),
+  setup: [
+    { label: 'Clone repository', status: 'ok', detail: 'fatherjake/tiny @ f14513a, history cut to one commit', durationMs: 4_000 },
+    { label: 'Detect stack', status: 'ok', detail: 'Python 3.12 + uv (uv.lock) · Node 22 + npm (ui/package-lock.json)', durationMs: 1_000 },
+    { label: 'Build test image', status: 'ok', detail: '2.95 GB · dependencies baked in, runs offline', durationMs: 98_000 },
+    { label: 'Install skills', status: 'ok', detail: 'Linked .agents/skills → .claude/skills (AGENTS.md routing kept)', durationMs: 1_000 },
+    { label: 'Baseline: tests', status: 'ok', detail: 'pytest 116 passed · vitest 40 passed', durationMs: 29_000 },
+    { label: 'Baseline: build and lint', status: 'ok', detail: 'npm run build · ruff check + format · check_loc.py', durationMs: 11_000 },
+    { label: 'Baseline: app starts', status: 'ok', detail: 'sim (4 validators, 20 bots) + UI on :3000 healthy', durationMs: 2_000 },
+    { label: 'Evaluate instructions and skills', status: 'ok', detail: '2 instruction files, 12 skills, 1 MCP config read', durationMs: 64_000 },
+    { label: 'Measure skill activation', status: 'ok', detail: '3 recipes × 10 probe runs', durationMs: 412_000 },
+    { label: 'Build task suite', status: 'warn', detail: '4 tasks + 2 held out (2 mined from history); 1 mined commit rejected: its tests pass before the change', durationMs: 236_000 },
+  ],
+  commands: [
+    { purpose: 'Install', command: 'uv sync && (cd ui && npm ci)', source: 'AGENTS.md › Commands, README', verified: true, result: 'baked into the image' },
+    { purpose: 'Test (Python)', command: 'uv run pytest', source: 'AGENTS.md › Commands', verified: true, result: '116 passed in 28s' },
+    { purpose: 'Test (UI)', command: 'cd ui && npm test', source: 'README › Run the tests', verified: true, result: '40 passed in 1s' },
+    { purpose: 'Build', command: 'cd ui && npm run build', source: 'ui/package.json', verified: true, result: 'ok in 9s' },
+    { purpose: 'Lint and line limit', command: 'uv run ruff check . && uv run ruff format --check . && uv run python scripts/check_loc.py', source: 'AGENTS.md › Commands', verified: true, result: 'clean' },
+    { purpose: 'Run', command: 'uv run python -m sim --validators 4 · cd ui && npm run dev', source: 'README › Run the sim / UI', verified: true, result: 'healthy in 2s' },
+    { purpose: 'Health check', command: 'curl -sf :8000/status (height > 0) · GET / on the UI', source: '.agents/skills/verify-tiny › Doctor', verified: true, result: 'height 41 after 2s' },
+  ],
+  surfaces: [
+    { path: 'CLAUDE.md', what: 'Points to AGENTS.md; says to link the skills and MCP config', loading: 'auto', note: 'Loaded every session' },
+    { path: 'AGENTS.md', what: 'Commands, "real work starts with saiyan", git rules', loading: 'auto', note: 'Read because CLAUDE.md tells the agent to (one extra read per run)' },
+    { path: '.agents/skills/', what: '12 skills (saiyan, verify-tiny, task-*, …)', loading: 'wired', note: 'Claude Code reads .claude/skills/; setup links it, as CLAUDE.md asks' },
+    { path: '.agents/mcp.json', what: 'MCP servers', loading: 'not-loaded', note: 'Servers need the network; the sandbox has none' },
+    { path: '.cursor/, .codex/', what: 'Other agents\' MCP configs', loading: 'not-loaded', note: 'Not read by Claude Code' },
+  ],
+  skills: [
+    { name: 'saiyan', role: 'Front door: picks a playbook, applies principals', usedFor: 'feature · fix · refactor', trigger: 'AGENTS.md: "real engineering work starts with saiyan"' },
+    { name: 'saiyan / feature', role: 'Playbook, 6 steps', usedFor: 'feature', trigger: 'Picked by saiyan' },
+    { name: 'saiyan / bug-fix', role: 'Playbook, 6 steps', usedFor: 'fix', trigger: 'Picked by saiyan' },
+    { name: 'saiyan / refactor', role: 'Playbook, 5 steps', usedFor: 'refactor', trigger: 'Picked by saiyan' },
+    { name: 'verify-tiny', role: 'Drives the sim and API to verify a change', usedFor: 'all (verify step)', trigger: 'Playbook step "verify on the real surface"' },
+    { name: 'task-progress', role: 'Records decisions on long runs', usedFor: 'long runs only', trigger: 'Rarely fires on suite tasks' },
+    { name: 'task-review', role: 'Reports which skills fired and what to fix', usedFor: 'end of a task', trigger: 'Overlaps with this tool; its reports are read as evidence' },
+  ],
+  activation: {
+    probeTask: 'Each recipe ran 10 short probe tasks (feature, fix, refactor); "fired" = saiyan loaded and a playbook\'s steps appear in the trace.',
+    probes: [
+      { recipe: 'Task prompt only', example: 'Add a funding countdown to the header.', fired: 3, total: 10, chosen: false },
+      { recipe: 'Prompt + "use saiyan mode"', example: 'Use saiyan mode. Add a funding countdown to the header.', fired: 9, total: 10, chosen: false },
+      { recipe: 'Slash command', example: '/saiyan Add a funding countdown to the header.', fired: 10, total: 10, chosen: true },
+    ],
+    finding:
+      'saiyan rarely fires on its own: AGENTS.md routes to it, but the skill description only matches when the prompt names it. Sessions use the slash command so the playbooks are always active. Making it fire without being named is a candidate suggestion.',
+  },
+  conflicts: [
+    { issue: 'AGENTS.md: "work on a branch, do not commit to main"', handling: 'Harmless: the graded result is the working-tree diff; commits are ignored' },
+    { issue: 'task-progress writes .agents/tasks/<task>/', handling: 'Excluded from the graded diff, so it never counts as stray files' },
+    { issue: 'MCP servers in .agents/mcp.json', handling: 'Not available offline; left unlinked' },
+    { issue: 'verify-tiny uses curl and a free port', handling: 'curl is in the image; ports are free inside the sandbox' },
+  ],
+};

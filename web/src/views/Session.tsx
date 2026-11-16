@@ -17,7 +17,7 @@ export function Session({ id }: { id: string }) {
         <h1 className="mono">{session.id}</h1>
         <SessionStatus status={session.status} />
         <span className="dim">
-          {session.skillsVersion} · started <Ago iso={session.createdAt} />
+          {session.skillsVersion} · <a href={href.repo()}>profile v{session.profileVersion}</a> · started <Ago iso={session.createdAt} />
         </span>
       </div>
       <Metrics items={summaryMetrics(sum)} />

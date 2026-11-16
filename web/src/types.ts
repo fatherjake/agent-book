@@ -16,6 +16,10 @@ export interface Task {
   kind: TaskKind;
   title: string;
   criteria: Criterion[];
+  /** Where the task came from: a commit in the repo's history, an injected bug, or written for the suite. */
+  source: { type: 'commit' | 'injected' | 'invented'; ref: string };
+  /** Held-out tasks are never used to propose suggestions, only to confirm them. */
+  heldOut: boolean;
 }
 
 export interface Run {
@@ -50,6 +54,8 @@ export interface Session {
   id: string;
   createdAt: string;
   status: 'running' | 'done';
+  /** Repo profile version the session ran under (environment + activation recipe). */
+  profileVersion: number;
   /** Short description of the skills under test (e.g. the commit of the skill files). */
   skillsVersion: string;
   runs: Run[];
@@ -62,4 +68,63 @@ export interface Repo {
   commit: string;
   skills: string[];
   tasks: Task[];
+}
+
+// ---- repo profile: the output of setup (environment) and repo evaluation ------------------------------
+
+export type StepStatus = 'ok' | 'warn' | 'fail' | 'running' | 'pending';
+
+export interface SetupStep {
+  label: string;
+  status: StepStatus;
+  detail: string;
+  durationMs: number | null;
+}
+
+export interface EnvCommand {
+  purpose: string;
+  command: string;
+  /** Where setup found it (e.g. 'AGENTS.md › Commands') or 'inferred'. */
+  source: string;
+  verified: boolean;
+  result: string;
+}
+
+export interface InstructionSurface {
+  path: string;
+  what: string;
+  /** auto: Claude Code loads it by itself; wired: setup made it load; not-loaded: deliberately left out. */
+  loading: 'auto' | 'wired' | 'not-loaded';
+  note: string;
+}
+
+export interface SkillInfo {
+  name: string;
+  role: string;
+  usedFor: string;
+  trigger: string;
+}
+
+export interface ActivationProbe {
+  recipe: string;
+  example: string;
+  fired: number;
+  total: number;
+  chosen: boolean;
+}
+
+export interface SandboxConflict {
+  issue: string;
+  handling: string;
+}
+
+export interface RepoProfile {
+  version: number;
+  evaluatedAt: string;
+  setup: SetupStep[];
+  commands: EnvCommand[];
+  surfaces: InstructionSurface[];
+  skills: SkillInfo[];
+  activation: { probes: ActivationProbe[]; finding: string; probeTask: string };
+  conflicts: SandboxConflict[];
 }
