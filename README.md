@@ -1,6 +1,7 @@
-# Frugal: autonomous token-efficiency benchmark
+# agent-book: improve a repo's agent skills with evidence
 
-Frugal searches for the **most token-efficient configuration of an AI coding agent** that still
+agent-book (formerly frugal) grew out of a token-efficiency benchmark. The benchmark searches for the
+**most token-efficient configuration of an AI coding agent** that still
 builds a complete, visually faithful full-stack todo app (React/Vite + Express + better-sqlite3).
 
 It repeats this loop unattended:
@@ -30,7 +31,7 @@ research dev task (`configs/research.json` `devTask`); its reference implementat
 > model. See [Status](#status-what-is-and-isnt-verified).
 
 
-> **New direction: the lab.** Frugal is becoming a tool that improves a repository's *skill files* with
+> **New direction: the lab.** agent-book is becoming a tool that improves a repository's *skill files* with
 > evidence: run the skills on real tasks, propose edits, test each with paired runs, and let a human
 > accept them. See [docs/LAB.md](docs/LAB.md) (`npm run lab -- session`, UI via `npm run lab -- serve`).
 > The token benchmark below is the foundation it is built on.

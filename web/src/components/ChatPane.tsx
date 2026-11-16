@@ -1,8 +1,9 @@
 /**
- * Chat pane docked to the bottom of every page: one continuous Claude Code session per page (the
- * sessions list, the repo, a session, a suggestion), started with that page's context (lab/chat.ts).
+ * Floating chat box on every page: one continuous Claude Code session per page (the sessions list, the
+ * repo, a session, a suggestion), started with that page's context (lab/chat.ts). Drag it by its header,
+ * resize it from the bottom-right corner; position, size and open state are remembered.
  */
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 
 interface ChatPart {
   kind: 'text' | 'tool';
@@ -22,19 +23,38 @@ interface ChatInfo {
   title: string;
 }
 
-const HEIGHT_KEY = 'frugal-lab-chat-height';
-const OPEN_KEY = 'frugal-lab-chat-open';
-const MIN_HEIGHT = 140;
-const HEADER_H = 37;
+const BOX_KEY = 'agent-book-chat-box';
+const OPEN_KEY = 'agent-book-chat-open';
+const DEFAULT_W = 550;
+const DEFAULT_H = 400;
+const MIN_W = 320;
+const MIN_H = 220;
+const MARGIN = 16;
 
-function readHeight(): number {
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Keep the box fully inside the viewport (and no bigger than it). */
+function clampBox(b: Box): Box {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const w = Math.max(Math.min(MIN_W, vw - 2 * MARGIN), Math.min(b.w, vw - 2 * MARGIN));
+  const h = Math.max(Math.min(MIN_H, vh - 2 * MARGIN), Math.min(b.h, vh - 2 * MARGIN));
+  return { w, h, x: Math.min(Math.max(MARGIN, b.x), vw - w - MARGIN), y: Math.min(Math.max(MARGIN, b.y), vh - h - MARGIN) };
+}
+
+function readBox(): Box {
   try {
-    const v = Number(localStorage.getItem(HEIGHT_KEY));
-    if (v >= MIN_HEIGHT) return v;
+    const v = JSON.parse(localStorage.getItem(BOX_KEY) ?? 'null');
+    if (v && [v.x, v.y, v.w, v.h].every((n) => typeof n === 'number' && Number.isFinite(n))) return clampBox(v);
   } catch {
     /* storage unavailable */
   }
-  return 300;
+  return clampBox({ w: DEFAULT_W, h: DEFAULT_H, x: window.innerWidth - DEFAULT_W - MARGIN, y: window.innerHeight - DEFAULT_H - MARGIN });
 }
 function readOpen(): boolean {
   try {
@@ -65,18 +85,20 @@ export function ChatPane({ chatKey, label }: { chatKey: string; label: string })
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(readOpen);
-  const [height, setHeight] = useState(readHeight);
+  const [box, setBox] = useState<Box>(readBox);
   const log = useRef<HTMLDivElement>(null);
+  const boxRef = useRef(box);
+  boxRef.current = box;
 
-  // Reserve room at the bottom of the page so the pane never covers content.
-  useEffect(() => {
-    document.documentElement.style.setProperty('--chat-pane-h', `${open ? height : HEADER_H}px`);
-    return () => {
-      document.documentElement.style.removeProperty('--chat-pane-h');
-    };
-  }, [open, height]);
+  // Stay inside the window when it shrinks.
+  useLayoutEffect(() => {
+    const onResize = () => setBox((b) => clampBox(b));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
-  const refresh = useCallback(async () => {
+  /** Reload the saved conversation. `keepError`: a failed send's error stays visible. */
+  const refresh = useCallback(async (keepError = false) => {
     try {
       const res = await fetch(url(chatKey), { cache: 'no-store' });
       const body = await res.json();
@@ -85,7 +107,8 @@ export function ChatPane({ chatKey, label }: { chatKey: string; label: string })
       setInfo(next);
       setMessages(next.messages);
       setBusy(next.busy);
-      setError(next.enabled ? null : 'Chat is disabled: the lab server is not bound to a loopback address.');
+      if (!next.enabled) setError('Chat is disabled: the lab server is not bound to a loopback address.');
+      else if (!keepError) setError(null);
       return next;
     } catch (e) {
       setError(`Chat unavailable: ${(e as Error).message}`);
@@ -121,6 +144,7 @@ export function ChatPane({ chatKey, label }: { chatKey: string; label: string })
     setDraft('');
     setError(null);
     setBusy(true);
+    let failed = false;
     setMessages((m) => [...m, { role: 'user', parts: [{ kind: 'text', text: message }] }, { role: 'assistant', parts: [] }]);
     const update = (fn: (reply: ChatMessage) => ChatMessage) =>
       setMessages((m) => {
@@ -164,14 +188,20 @@ export function ChatPane({ chatKey, label }: { chatKey: string; label: string })
           } else if (ev.type === 'tool' && ev.label) {
             const l = ev.label;
             update((r) => ({ ...r, parts: [...r.parts, { kind: 'tool', label: l }] }));
-          } else if (ev.type === 'error') setError(ev.message ?? 'Claude failed');
+          } else if (ev.type === 'error') {
+            failed = true;
+            setError(ev.message ?? 'Claude failed');
+          }
         }
       }
     } catch (e) {
-      setError((e as Error).message);
+      // The message was not sent: say why and give the text back, so nothing is lost.
+      failed = true;
+      setError(`Not sent: ${(e as Error).message}`);
+      setDraft((d) => d || message);
     } finally {
       setBusy(false);
-      void refresh();
+      void refresh(failed);
     }
   }
 
@@ -179,17 +209,26 @@ export function ChatPane({ chatKey, label }: { chatKey: string; label: string })
     await fetch(url(chatKey, '/stop'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => undefined);
   }
 
-  function startResize(e: ReactPointerEvent<HTMLDivElement>) {
+  /** Drag (move the box) or resize (from the bottom-right corner) with the pointer. */
+  function track(e: ReactPointerEvent<HTMLElement>, mode: 'move' | 'resize') {
+    if (e.button !== 0) return;
+    if (mode === 'move' && (e.target as HTMLElement).closest('button, a, .chat-session')) return;
     e.preventDefault();
-    const startY = e.clientY;
-    const startH = height;
-    const clamp = (y: number) => Math.max(MIN_HEIGHT, Math.min(window.innerHeight - 80, startH + (startY - y)));
-    const move = (ev: PointerEvent) => setHeight(clamp(ev.clientY));
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const start = boxRef.current;
+    const next = (ev: PointerEvent): Box =>
+      mode === 'move'
+        ? clampBox({ ...start, x: start.x + ev.clientX - sx, y: start.y + ev.clientY - sy })
+        : clampBox({ ...start, w: Math.max(MIN_W, start.w + ev.clientX - sx), h: Math.max(MIN_H, start.h + ev.clientY - sy) });
+    const move = (ev: PointerEvent) => setBox(next(ev));
     const up = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
-      store(HEIGHT_KEY, String(clamp(ev.clientY)));
+      document.body.classList.remove('chat-dragging');
+      store(BOX_KEY, JSON.stringify(next(ev)));
     };
+    document.body.classList.add('chat-dragging');
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   }
@@ -201,19 +240,29 @@ export function ChatPane({ chatKey, label }: { chatKey: string; label: string })
     });
   const disabled = info !== null && !info.enabled;
 
+  if (!open)
+    return (
+      <button type="button" className="chat-launcher" onClick={toggle} aria-expanded={false}>
+        Ask Claude about <span className="mono">{label}</span>
+        {busy && <span className="dim"> · answering…</span>}
+      </button>
+    );
+
   return (
-    <section className="chat-pane" style={{ height: open ? height : HEADER_H }} aria-label={`Chat about ${label}`}>
-      {open && <div className="chat-resize" onPointerDown={startResize} title="Drag to resize" />}
-      <div className="chat-head">
-        <button type="button" className="chat-title" onClick={toggle} aria-expanded={open}>
-          {open ? '▾' : '▸'} Ask Claude about <span className="mono">{label}</span>
+    <section className="chat-box" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} aria-label={`Chat about ${label}`}>
+      <div className="chat-head" onPointerDown={(e) => track(e, 'move')} title="Drag to move">
+        <span className="chat-title">
+          Ask Claude about <span className="mono">{label}</span>
+        </span>
+        <button type="button" className="chat-close" onClick={toggle} aria-label="Minimise chat" title="Minimise">
+          –
         </button>
-        {info && (
-          <span className="chat-session mono" title="Continue this chat in a terminal">
-            {info.started ? `claude --resume ${info.sessionId}` : 'new chat · starts with this page as context'}
-          </span>
-        )}
       </div>
+      {info && (
+        <div className="chat-session mono" title="Continue this chat in a terminal">
+          {info.started ? `claude --resume ${info.sessionId}` : 'new chat · starts with this page as context'}
+        </div>
+      )}
       {open && (
         <>
           <div className="chat-log" ref={log}>
@@ -273,6 +322,7 @@ export function ChatPane({ chatKey, label }: { chatKey: string; label: string })
           </form>
         </>
       )}
+      <div className="chat-grip" onPointerDown={(e) => track(e, 'resize')} title="Drag to resize" />
     </section>
   );
 }

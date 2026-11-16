@@ -41,7 +41,7 @@ const MAX_MESSAGE_CHARS = 20_000;
 const MAX_BODY_BYTES = 64 * 1024;
 const PROFILE_MAX_CHARS = 12_000;
 
-export const CHAT_SYSTEM_PROMPT = `You are chatting from a pane in the frugal dashboard, next to one experiment of a token-efficiency benchmark.
+export const CHAT_SYSTEM_PROMPT = `You are chatting from a pane in the agent-book benchmark dashboard, next to one experiment of a token-efficiency benchmark.
 The benchmark measures how many tokens a coding agent (Claude Code in a Docker sandbox) needs to implement a task; a research loop proposes config changes (system prompt, tools, skills, limits) as experiments. Each experiment gets 1 quick run, then 5 verification runs if the quick run beat the best; the verified median tokens and pass rate decide promotion, and a holdout run on another task guards against overfitting. docs/ARCHITECTURE.md, docs/TASKS.md and README.md explain the system.
 Where things are (paths relative to the repo root, your working directory):
 - results/benchmark.db: the append-only SQLite results DB. Query it read-only with: sqlite3 -safe -readonly results/benchmark.db "<SQL>" (exactly that prefix; -safe blocks .shell/.output; tables runs, evaluations, experiments, usage_records, ...; .schema shows them).
@@ -269,7 +269,7 @@ export function createChatHandler(opts: ChatOptions) {
       '--allowedTools', CHAT_ALLOWED_TOOLS.join(','),
       '--disallowedTools', CHAT_DENIED_TOOLS.join(','),
       '--append-system-prompt', `${CHAT_SYSTEM_PROMPT}\n\n${state.context}`,
-      ...(state.started ? ['--resume', state.sessionId] : ['--session-id', state.sessionId, '--name', `frugal - ${id}`]),
+      ...(state.started ? ['--resume', state.sessionId] : ['--session-id', state.sessionId, '--name', `agent-book benchmark - ${id}`]),
     ];
 
     const reply: ChatMessage = { role: 'assistant', parts: [] };

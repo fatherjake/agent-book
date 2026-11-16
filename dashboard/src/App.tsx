@@ -46,7 +46,7 @@ export function App() {
         <div className="ds-header__inner">
           <div className="ds-header__left">
             <a className="ds-brand" href="#/">
-              Frugal
+              agent-book
             </a>
             <nav className="ds-nav">
               <a href="#/" aria-current={seg.length === 0 || seg[0] === 'experiments' || seg[0] === 'charts' || seg[0] === 'runs' ? 'page' : undefined}>

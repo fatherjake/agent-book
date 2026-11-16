@@ -43,7 +43,7 @@ export const CHAT_DENIED_TOOLS = ['Edit', 'Write', 'NotebookEdit', 'WebFetch', '
 const MAX_MESSAGE_CHARS = 20_000;
 const MAX_BODY_BYTES = 64 * 1024;
 
-export const CHAT_SYSTEM_PROMPT = `You are chatting from a pane in the frugal lab UI, next to the page the user is looking at.
+export const CHAT_SYSTEM_PROMPT = `You are chatting from a pane in the agent-book UI, next to the page the user is looking at.
 The lab improves a repository's skill files (instructions, playbooks, principles) with evidence: a session runs a coding agent (Claude Code in a Docker sandbox) with the current skills on a suite of tasks, grades each run against acceptance criteria (partial credit), an analyst proposes edits to the skill files (suggestions), and the top suggestions are tested with paired runs (same task and seed as a session run). A human accepts or rejects them. docs/LAB.md explains it.
 Where things are (paths relative to the repo root, your working directory):
 - results/lab.db: SQLite. Query it read-only with exactly this prefix: sqlite3 -safe -readonly results/lab.db "<SQL>". Tables: repos, profiles (repo profile JSON), tasks, sessions, suggestions (diff, evidence), runs (session_id, suggestion_id, task_id, pair_key, tokens, cost_usd, duration_ms, criteria_met, criteria_detail JSON, skills_fired, error).
@@ -212,8 +212,18 @@ export function requestAllowed(req: http.IncomingMessage): string | null {
   const host = (req.headers.host ?? '').toLowerCase();
   const hostname = host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : host.split(':')[0];
   if (!LOOPBACK_HOSTS.has(hostname) && !hostname.startsWith('127.')) return 'chat is only available on a loopback address';
+  // A present Origin must be a loopback page (the UI itself, or its dev server on another port).
+  // Other sites can't pass: their Origin is not loopback, and a rebound DNS name fails the Host check.
   const origin = req.headers.origin;
-  if (origin && origin !== `http://${host}`) return 'cross-origin chat requests are refused';
+  if (origin) {
+    let oh = '';
+    try {
+      oh = new URL(origin).hostname.toLowerCase();
+    } catch {
+      return 'cross-origin chat requests are refused';
+    }
+    if (!(oh === 'localhost' || oh === '[::1]' || oh === '::1' || /^127\./.test(oh))) return 'cross-origin chat requests are refused';
+  }
   if (req.method === 'POST' && !(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return 'chat requests must be application/json';
   return null;
 }
@@ -279,7 +289,7 @@ export function createChatHandler(opts: ChatOptions) {
       '--allowedTools', CHAT_ALLOWED_TOOLS.join(','),
       '--disallowedTools', CHAT_DENIED_TOOLS.join(','),
       '--append-system-prompt', `${CHAT_SYSTEM_PROMPT}\n\n${state.context}`,
-      ...(state.started ? ['--resume', state.sessionId] : ['--session-id', state.sessionId, '--name', `frugal lab - ${key}`]),
+      ...(state.started ? ['--resume', state.sessionId] : ['--session-id', state.sessionId, '--name', `agent-book - ${key}`]),
     ];
     const reply: ChatMessage = { role: 'assistant', parts: [] };
     state.messages.push({ role: 'user', parts: [{ kind: 'text', text: message }] });

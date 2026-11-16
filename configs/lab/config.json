@@ -1,6 +1,6 @@
 {
   "id": "lab",
-  "description": "Lab runs: the real Claude Code CLI with default tools and no frugal instructions beyond the sandbox note, so the repo's own instruction files and skills (supplied per run as the skills overlay) drive the agent.",
+  "description": "Lab runs: the real Claude Code CLI with default tools and no agent-book instructions beyond the sandbox note, so the repo's own instruction files and skills (supplied per run as the skills overlay) drive the agent.",
   "backend": "claude-code",
   "provider": "anthropic",
   "model": "claude-sonnet-5-5",

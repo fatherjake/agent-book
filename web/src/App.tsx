@@ -30,7 +30,7 @@ export function App() {
     <>
       <header className="top">
         <a className="brand" href={href.sessions()}>
-          frugal
+          agent-book
         </a>
         <span className="sep" />
         {lab.repo ? (
