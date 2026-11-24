@@ -10,6 +10,7 @@
     "server": "npm run start -w @agent-book/server",
     "web": "npm run dev -w @agent-book/web",
     "build": "npm run build -w @agent-book/web",
-    "typecheck": "npm run typecheck --workspaces"
+    "typecheck": "npm run typecheck --workspaces",
+    "install-app": "scripts/install-mac-app.sh"
   }
 }
