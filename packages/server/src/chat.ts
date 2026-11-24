@@ -17,6 +17,7 @@ import { existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { markBusy, markIdle } from './activity.js';
 import { json, readBody, runClaude } from './claude.js';
 import { loadChat, saveChat, type ChatMessage, type ChatState } from './chats.js';
 import { chatContext } from './context.js';
@@ -101,9 +102,11 @@ export function createChat(root: string) {
       },
     });
     running.set(key, proc);
+    markBusy(`chat:${key}`);
 
     const { error } = await done;
     running.delete(key);
+    markIdle(`chat:${key}`);
     const latest = load(key);
     // Only mark the session started once Claude has actually created it.
     if (!error || reply.parts.length > 0) latest.started = true;

@@ -248,7 +248,7 @@ function busyTime(intervals: Interval[]): { total: number; permission: number; t
 }
 
 export function sessionDetail(db: TelemetryDb, id: string): SessionDetail | null {
-  const all = listSessions(db);
+  const all = listSessions(db, { hidden: true });
   const session = all.find((s) => s.id === id);
   if (!session) return null;
   const homeFolder = session.folder;
@@ -259,7 +259,8 @@ export function sessionDetail(db: TelemetryDb, id: string): SessionDetail | null
 
   // --- children ---------------------------------------------------------------------------------
   const kids = new Map<string, SessionSummary[]>();
-  for (const s of all) if (s.parentId) kids.set(s.parentId, [...(kids.get(s.parentId) ?? []), s]);
+  // The dashboard's own sessions (chats, lab runs) are never counted as launched by the session.
+  for (const s of all) if (s.parentId && !s.internal) kids.set(s.parentId, [...(kids.get(s.parentId) ?? []), s]);
   const descendantsOf = (sid: string): string[] => (kids.get(sid) ?? []).flatMap((c) => [c.id, ...descendantsOf(c.id)]);
   const family = descendantsOf(id);
   const costs = new Map<string, { cost: number; tokens: number }>();

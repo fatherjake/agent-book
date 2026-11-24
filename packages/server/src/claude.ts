@@ -26,7 +26,7 @@ export interface RunResult {
  * started it are dropped, so the chat isn't recorded as a session launched by whichever Claude Code
  * session happened to start this server.
  */
-function chatEnv(): NodeJS.ProcessEnv {
+export function chatEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   for (const k of ['CLAUDECODE', 'CLAUDE_PID', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_SESSION_ATTENDED', 'CLAUDE_CODE_CHILD_NOTES_DIR', 'CLAUDE_CODE_MESSAGING_SOCKET', 'CLAUDE_CODE_MESSAGING_TOKEN', 'CLAUDE_CODE_EXECPATH'])
     delete env[k];

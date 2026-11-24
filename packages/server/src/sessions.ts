@@ -21,7 +21,8 @@
  *   timing  a headless session started while exactly one launcher session was running, i.e. one that
  *           ran `claude -p` from Bash or already has children by the rules above (a best guess)
  *
- * The dashboard's own page chats (chats.ts) are Claude Code sessions too; they are left out.
+ * The dashboard's own page chats (chats.ts) and lab runs (lab/) are Claude Code sessions too; they are
+ * left out of the list.
  *
  * Transcripts are found under ~/.claude/projects by session id when the hook didn't record a path. They
  * can be large, so what is read from each one is cached until the file changes.
@@ -31,6 +32,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { chatSessionIds } from './chats.js';
+import { labSessionIds, labSummaries, type LabSummary } from './lab/state.js';
 import { TelemetryDb } from './store.js';
 
 export interface SessionSummary {
@@ -53,6 +55,10 @@ export interface SessionSummary {
   parentId: string | null;
   /** How the parent was found (see the module comment). */
   parentLink: 'hook' | 'path' | 'timing' | null;
+  /** One of the dashboard's own sessions (a page chat or a lab run); only listed with `hidden`. */
+  internal: boolean;
+  /** The suggestions lab's status for this session, when it has been analysed. */
+  lab: LabSummary | null;
 }
 
 const PROJECTS = () => join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects');
@@ -234,7 +240,11 @@ function findParents(
   return out;
 }
 
-export function listSessions(db: TelemetryDb): SessionSummary[] {
+/**
+ * Every session, newest first. The dashboard's own sessions (page chats, and the lab's analyst, replay and
+ * judge runs) are left out unless `hidden` is set, so their pages can still be opened.
+ */
+export function listSessions(db: TelemetryDb, o: { hidden?: boolean } = {}): SessionSummary[] {
   // parent_id arrives with a collector restart; until then the hook column is read as null.
   const hasParent = (db.raw.prepare('PRAGMA table_info(sessions)').all() as { name: string }[]).some((c) => c.name === 'parent_id');
   const rows = db.raw
@@ -265,7 +275,8 @@ export function listSessions(db: TelemetryDb): SessionSummary[] {
   const transcripts = transcriptIndex();
   const responses = latestResponses(db);
   const headless = headlessSessions(db);
-  const chats = chatSessionIds();
+  const own = new Set([...chatSessionIds(), ...labSessionIds()]);
+  const labs = labSummaries();
   const usage = new Map(
     (
       db.raw
@@ -278,7 +289,7 @@ export function listSessions(db: TelemetryDb): SessionSummary[] {
         .all() as { session_id: string; cost: number | null; tokens: number | null }[]
     ).map((r) => [r.session_id, { cost: r.cost ?? 0, tokens: r.tokens ?? 0 }]),
   );
-  const base = rows.filter((r) => !chats.has(r.id)).map((r) => {
+  const base = rows.filter((r) => o.hidden || !own.has(r.id)).map((r) => {
     const path = r.transcript_path ?? transcripts.get(r.id) ?? null;
     return { r, t: path ? readTranscript(path) : null };
   });
@@ -306,6 +317,8 @@ export function listSessions(db: TelemetryDb): SessionSummary[] {
       tokens: usage.get(r.id)?.tokens ?? 0,
       parentId: parent?.id ?? null,
       parentLink: parent?.link ?? null,
+      internal: own.has(r.id),
+      lab: labs.get(r.id) ?? null,
     };
   });
 }
