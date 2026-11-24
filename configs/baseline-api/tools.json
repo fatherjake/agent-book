@@ -1,8 +1,0 @@
-[
-  { "name": "read_file", "enabled": true, "maxOutputChars": 40000, "outputMode": "truncate" },
-  { "name": "write_file", "enabled": true },
-  { "name": "edit_file", "enabled": true },
-  { "name": "list_dir", "enabled": true, "maxOutputChars": 8000, "outputMode": "truncate" },
-  { "name": "run_command", "enabled": true, "maxOutputChars": 12000, "outputMode": "truncate", "timeoutSec": 180 },
-  { "name": "view_image", "enabled": true }
-]

@@ -1,8 +1,0 @@
-#!/bin/sh
-# clip [max]: keep the first and last max/2 characters of stdin.
-max=${1:-2000}
-f=$(mktemp)
-cat > "$f"
-n=$(wc -c < "$f")
-if [ "$n" -le "$max" ]; then cat "$f"; else head -c $((max / 2)) "$f"; printf '\n[... %s chars clipped ...]\n' $((n - max)); tail -c $((max / 2)) "$f"; fi
-rm -f "$f"

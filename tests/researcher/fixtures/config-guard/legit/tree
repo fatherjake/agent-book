@@ -1,6 +1,0 @@
-#!/bin/sh
-# tree: compact project map (source files with line counts), no node_modules/dist.
-cd /workspace || exit 1
-find . \( -name node_modules -o -name dist -o -name .git \) -prune -o -type f -print | sort | while read -r f; do
-  printf '%5s %s\n' "$(wc -l < "$f")" "$f"
-done
