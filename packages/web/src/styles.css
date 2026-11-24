@@ -186,8 +186,8 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
   text-decoration: none; border-left: 2px solid transparent; border-bottom: 1px solid var(--border);
 }
 .side-row:hover { background: var(--row-hover); }
-.side-row.selected { background: var(--row-sel); border-left-color: var(--accent); }
-.side-row.ancestor { border-left-color: var(--accent); }
+.side-row.selected { background: var(--row-sel); }
+.side-row.ancestor { background: var(--row-hover); }
 .side-title { display: flex; align-items: center; min-width: 0; color: var(--strong); }
 .side-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-title .chip, .side-title .pill { flex: none; }
@@ -234,10 +234,10 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .tabbar button {
   padding: 0 12px; background: none; border: none; border-right: 1px solid var(--border); cursor: pointer;
   font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim);
-  border-bottom: 2px solid transparent;
+  display: flex; align-items: center; gap: 5px;
 }
 .tabbar button:hover { color: var(--strong); }
-.tabbar button.active { color: var(--strong); background: var(--panel); border-bottom-color: var(--accent); }
+.tabbar button.active { color: var(--strong); background: var(--panel); }
 
 /* Dense tables */
 .grid { width: 100%; border-collapse: collapse; table-layout: auto; }
@@ -252,7 +252,7 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .grid td.wide { width: 100%; }
 .grid tbody tr { cursor: pointer; }
 .grid tbody tr:hover { background: var(--row-hover); }
-.grid tbody tr.sel { background: var(--row-sel); box-shadow: inset 2px 0 0 var(--accent); }
+.grid tbody tr.sel { background: var(--row-sel); }
 .grid tbody tr:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .bar-col { width: 52px; padding-left: 0 !important; }
 .cell-bar { display: block; width: 48px; height: 6px; }
