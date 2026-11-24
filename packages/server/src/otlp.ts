@@ -146,7 +146,7 @@ export function scrub(s: string): string {
   return out
     .replace(BEARER, '$1 [REDACTED]')
     .replace(URL_CREDS, '$1$2:[REDACTED]@')
-    .replace(KEY_VALUE, (m, k, sep, q) => `${k}${sep}${q}[REDACTED]${q}`);
+    .replace(KEY_VALUE, (_m, k, sep, q) => `${k}${sep}${q}[REDACTED]${q}`);
 }
 
 export function scrubDeep<T>(v: T): T {
