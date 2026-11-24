@@ -39,8 +39,42 @@
   font-size: 12px;
   line-height: 1.4;
 }
+/* Light: when chosen with the theme button, or when the system prefers it and dark wasn't chosen. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eceef1;
+  --panel: #fbfbfa;
+  --panel-head: #f1f2f4;
+  --raised: #ffffff;
+  --row-hover: #f0f3f7;
+  --row-sel: #dcebfc;
+  --border: #dcdfe4;
+  --border-strong: #c9cdd4;
+  --fg: #23262b;
+  --strong: #0b0c0e;
+  --dim: #6b717b;
+  --accent: #2a78d6;
+  --up: #1a7f37;
+  --down: #c4312f;
+  --warn: #9a6700;
+  --ink-strong: #3d4048;
+  --ink-faint: #d9dce1;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --add-bg: #e3f4e8;
+  --del-bg: #fce8e8;
+  --code-bg: #f4f5f7;
+  --you-bg: rgba(255, 255, 255, 0.75);
+  --you-border: rgba(0, 0, 0, 0.08);
+  --claude-bg: rgba(235, 104, 52, 0.1);
+  --claude-border: rgba(235, 104, 52, 0.3);
+  --scroll-thumb: rgba(0, 0, 0, 0.16);
+  --scroll-thumb-hover: rgba(0, 0, 0, 0.32);
+}
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     color-scheme: light;
     --bg: #eceef1;
     --panel: #fbfbfa;
@@ -154,8 +188,19 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .side-row:hover { background: var(--row-hover); }
 .side-row.selected { background: var(--row-sel); border-left-color: var(--accent); }
 .side-row.ancestor { border-left-color: var(--accent); }
-.side-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--strong); }
+.side-title { display: flex; align-items: center; min-width: 0; color: var(--strong); }
+.side-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-title .chip, .side-title .pill { flex: none; }
 .side-ago { font-size: 11px; color: var(--fg); text-align: right; }
+.pill {
+  display: inline-block; margin-left: 6px; padding: 1px 3px; vertical-align: 1px; border-radius: 3px;
+  font-size: 9.5px; font-weight: 600; line-height: 14px; letter-spacing: 0.02em; text-transform: uppercase;
+  border: 0;
+}
+.pill-open { color: var(--up); background: color-mix(in srgb, var(--up) 14%, transparent); }
+.pill-testing { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.pill-analysing { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.pill-done { color: var(--dim); }
 .side-meta { grid-column: 1 / -1; display: flex; gap: 10px; font-size: 11px; color: var(--dim); }
 .side-folder { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 10.5px; }
 
@@ -284,8 +329,55 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .md th { color: var(--strong); font-weight: 600; background: rgba(127, 127, 127, 0.08); }
 .md-clamped { overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, black 70%, transparent); mask-image: linear-gradient(to bottom, black 70%, transparent); }
 
+/* --- Suggestions lab ---------------------------------------------------------------------------- */
+.lab-intro { max-width: 640px; margin: 0 0 10px; }
+.lab-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; margin-bottom: 4px; }
+.brief { max-width: 760px; }
+.field { display: flex; flex-direction: column; gap: 2px; margin: 0 0 8px; }
+.field.inline { flex-direction: row; align-items: center; gap: 8px; }
+.field textarea, .field input, .run-control select {
+  font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 4px 6px;
+}
+.field textarea { resize: vertical; }
+.field input { width: 90px; }
+.field textarea:focus, .field input:focus, .run-control select:focus { outline: none; border-color: var(--accent); }
+.row-gap { display: flex; gap: 6px; }
+.button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.button.primary:hover:not(:disabled) { filter: brightness(1.1); }
+.button.small { padding: 1px 8px; font-size: 11px; }
+.run-control { display: inline-flex; gap: 6px; align-items: center; }
+.run-control select { padding: 0 2px; font-size: 11px; }
+.chip.kind { margin: 0 4px 0 0; }
+.button.decide { min-width: 24px; padding: 1px 6px; font-weight: 600; }
+.button.accept { color: var(--up); background: color-mix(in srgb, var(--up) 12%, transparent); border-color: color-mix(in srgb, var(--up) 35%, transparent); }
+.button.reject { color: var(--down); background: color-mix(in srgb, var(--down) 12%, transparent); border-color: color-mix(in srgb, var(--down) 35%, transparent); }
+.button.accept:hover, .button.accept.on { background: color-mix(in srgb, var(--up) 30%, transparent); border-color: var(--up); }
+.button.reject:hover, .button.reject.on { background: color-mix(in srgb, var(--down) 30%, transparent); border-color: var(--down); }
+.grid tbody tr.rejected td:not(:last-child) { opacity: 0.45; }
+.grid tbody tr.rejected td:nth-child(2) { text-decoration: line-through; }
+.compare { margin-bottom: 4px; }
+.compare tbody tr { cursor: default; }
+.runs { list-style: none; margin: 0; padding: 0; }
+.runs li.stale { opacity: 0.55; }
+.judge { list-style: none; margin: 4px 0 6px; padding: 0; font-size: 11.5px; }
+.judge li { margin: 2px 0; }
+.diff-add { display: block; background: var(--add-bg); }
+.diff-del { display: block; background: var(--del-bg); }
+.diff-hunk { display: block; color: var(--accent); }
+details > summary { cursor: pointer; margin: 4px 0; }
+
 /* --- Chat ---------------------------------------------------------------------------------------- */
 .chat { flex: none; position: relative; }
+.chat.collapsed { height: auto; }
+.chat-log[hidden] { display: none; }
+.panel-button {
+  display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 18px; padding: 0;
+  font-size: 11px; color: var(--dim); background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer;
+}
+.panel-button:hover { color: var(--strong); border-color: var(--border-strong); }
+/* "_" sits on the baseline; nudge it up to the middle of the button. */
+.theme-toggle { font-size: 12px; margin-right: -4px; }
+.chat .panel-button { line-height: 1; padding-bottom: 4px; font-family: var(--mono); }
 
 .chat-log { flex: 1; overflow: auto; min-height: 0; padding: 6px 12px; }
 .chat-msg { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 8px; margin: 4px 0; }

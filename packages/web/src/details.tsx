@@ -1,6 +1,8 @@
 /** The detail panel: everything about the selected row. */
 import type { ReactNode } from 'react';
 import type { Item, SessionDetail } from '../../server/src/session-detail';
+import type { Lab } from './lab';
+import { SuggestionDetail } from './suggestions';
 import { formatDur, formatStamp, formatTokens, formatUsd } from './format';
 import { Clamp, ClampMarkdown, ItemList, Marker, ToolOutput } from './parts';
 import { findTool, findTurn, titleOf, toHash, turnLabel, type Selection } from './view';
@@ -9,6 +11,7 @@ interface Props {
   d: SessionDetail;
   sel: Selection | null;
   select: (kind: Selection['kind'], key: string) => void;
+  lab: Lab;
 }
 
 
@@ -30,6 +33,7 @@ export function detailTitle(d: SessionDetail, sel: Selection | null): string {
   if (!sel) return 'Detail';
   if (sel.kind === 'turn') return `Turn #${findTurn(d, sel.key)?.n ?? '?'}`;
   if (sel.kind === 'tool') return `Tool call · ${findTool(d, sel.key)?.tool.name ?? ''}`;
+  if (sel.kind === 'suggestion') return sel.key === 'baseline' ? 'Baseline' : 'Suggestion';
   return 'Launched session';
 }
 
@@ -55,8 +59,9 @@ export function DetailNav({ d, sel, select }: { d: SessionDetail; sel: Selection
   );
 }
 
-export function Detail({ d, sel, select }: Props) {
+export function Detail({ d, sel, select, lab }: Props) {
   if (!sel) return <Empty />;
+  if (sel.kind === 'suggestion') return <SuggestionDetail lab={lab} id={sel.key} />;
   if (sel.kind === 'turn') return <TurnDetail d={d} id={sel.key} select={select} />;
   if (sel.kind === 'tool') return <ToolDetail d={d} id={sel.key} select={select} />;
   if (sel.kind === 'child') {
@@ -98,7 +103,7 @@ export function Detail({ d, sel, select }: Props) {
 const Gone = () => <p className="pad dim">That item isn't in this session any more.</p>;
 
 /** Only when the session has no turns to select. */
-const Empty = () => <p className="pad dim">No prompts were recorded for this session.</p>;
+const Empty = () => <p className="pad dim">Nothing selected.</p>;
 
 function TurnDetail({ d, id, select }: { d: SessionDetail; id: string; select: Props['select'] }) {
   const hit = findTurn(d, id);

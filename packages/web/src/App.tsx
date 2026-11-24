@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SessionDetail } from '../../server/src/session-detail';
 import type { SessionSummary } from '../../server/src/sessions';
 import { ChatPane } from './ChatPane';
+import { useLab } from './lab';
 import { useResizable } from './resize';
 import { Detail, DetailNav, detailTitle } from './details';
 import { SessionHeader } from './SessionHeader';
@@ -40,6 +41,7 @@ export function App() {
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [detail, setDetail] = useState<DetailLoad>({ state: 'idle' });
+  const lab = useLab(view.id);
   const side = useResizable('agent-book:sidebar-width', { axis: 'x', min: 180, max: () => window.innerWidth * 0.5 });
   const det = useResizable('agent-book:detail-width', { axis: 'x', invert: true, min: 240, max: () => window.innerWidth - (side.size ?? SIDEBAR_DEFAULT) - 320 });
   const detailRef = useRef<HTMLElement>(null);
@@ -125,12 +127,16 @@ export function App() {
 
   const d = detail.state === 'ok' && detail.d.session.id === view.id ? detail.d : null;
   // Read when a message is sent, so it describes the screen at that moment.
-  // With nothing chosen, the first turn is selected, so the detail panel always shows something.
-  const sel: Selection | null = view.sel ?? (d?.turns[0] ? { kind: 'turn', key: d.turns[0].promptId } : null);
+  // With nothing chosen, the first row is selected, so the detail panel always shows something: the first
+  // suggestion on the Suggestions tab, the first turn elsewhere.
+  const firstSuggestion = lab.state?.suggestions[0]?.id;
+  const sel: Selection | null =
+    view.sel ??
+    (view.tab === 'suggestions' ? (firstSuggestion ? { kind: 'suggestion', key: firstSuggestion } : null) : d?.turns[0] ? { kind: 'turn', key: d.turns[0].promptId } : null);
   const shown: View = { ...view, sel };
-  const viewRef = useRef({ d, view: shown });
-  viewRef.current = { d, view: shown };
-  const describe = useCallback(() => describeView(viewRef.current.d, viewRef.current.view), []);
+  const viewRef = useRef({ d, view: shown, lab: lab.state });
+  viewRef.current = { d, view: shown, lab: lab.state };
+  const describe = useCallback(() => describeView(viewRef.current.d, viewRef.current.view, viewRef.current.lab), []);
 
   return (
     <div className="app" style={{ gridTemplateColumns: `${side.size ?? SIDEBAR_DEFAULT}px minmax(0, 1fr)` }}>
@@ -156,7 +162,7 @@ export function App() {
                   })}
                 </div>
                 <div className="scroll" role="tabpanel">
-                  <TabBody tab={view.tab} d={d} sel={sel} select={select} />
+                  <TabBody tab={view.tab} d={d} sel={sel} select={select} lab={lab} />
                 </div>
               </section>
               <section className="panel detail-panel" ref={detailRef}>
@@ -166,7 +172,7 @@ export function App() {
                   <DetailNav d={d} sel={sel} select={select} />
                 </div>
                 <div className="scroll">
-                  <Detail d={d} sel={sel} select={select} />
+                  <Detail d={d} sel={sel} select={select} lab={lab} />
                 </div>
               </section>
             </div>

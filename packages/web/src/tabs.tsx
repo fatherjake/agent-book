@@ -1,6 +1,8 @@
 /** The tabbed panel's contents: dense, selectable tables. Selecting a row shows it in the detail panel. */
 import { useMemo, useState } from 'react';
 import type { SessionDetail } from '../../server/src/session-detail';
+import type { Lab } from './lab';
+import { SuggestionsTab } from './suggestions';
 import { formatDur, formatStamp, formatTokens, formatUsd } from './format';
 import { CellBar, Row, StackedBar } from './parts';
 import { sameSel, titleOf, turnLabel, type Selection, type Tab } from './view';
@@ -9,6 +11,7 @@ export interface TabProps {
   d: SessionDetail;
   sel: Selection | null;
   select: (kind: Selection['kind'], key: string) => void;
+  lab: Lab;
 }
 
 const tokenTotal = (t: { input: number; output: number; cacheRead: number; cacheWrite: number }) => t.input + t.output + t.cacheRead + t.cacheWrite;
@@ -16,6 +19,7 @@ const tokenTotal = (t: { input: number; output: number; cacheRead: number; cache
 export function TabBody({ tab, ...p }: TabProps & { tab: Tab }) {
   if (tab === 'sessions') return <SessionsTab {...p} />;
   if (tab === 'usage') return <UsageTab {...p} />;
+  if (tab === 'suggestions') return <SuggestionsTab lab={p.lab} sel={p.sel} select={p.select} />;
   return <ConvoTab {...p} />;
 }
 

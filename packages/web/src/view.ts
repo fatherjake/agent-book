@@ -5,19 +5,23 @@
  */
 import type { Item, SessionDetail, Turn } from '../../server/src/session-detail';
 import type { SessionSummary } from '../../server/src/sessions';
+import { compare, finished, type LabState } from './lab';
 import { firstLine, formatMs, formatTokens, formatUsd } from './format';
 
 export const TABS = [
   { id: 'convo', label: 'Convo' },
   { id: 'sessions', label: 'Sessions' },
   { id: 'usage', label: 'Usage' },
+  { id: 'suggestions', label: 'Suggestions' },
 ] as const;
 export type Tab = (typeof TABS)[number]['id'];
 
 export type Selection =
   | { kind: 'turn'; key: string }
   | { kind: 'tool'; key: string }
-  | { kind: 'child'; key: string };
+  | { kind: 'child'; key: string }
+  /** A lab suggestion by id, or "baseline". */
+  | { kind: 'suggestion'; key: string };
 
 export interface View {
   id: string | null;
@@ -25,7 +29,7 @@ export interface View {
   sel: Selection | null;
 }
 
-const KINDS = new Set(['turn', 'tool', 'child']);
+const KINDS = new Set(['turn', 'tool', 'child', 'suggestion']);
 
 export function parseHash(hash: string): View {
   const m = hash.match(/^#\/session\/([0-9a-f-]{36})(?:\/([a-z]+))?(?:\/([a-z]+):(.+))?$/);
@@ -82,7 +86,7 @@ export const findTurn = (d: SessionDetail, promptId: string) => {
 const cut = (s: string | null | undefined, n: number) => (!s ? '' : s.length > n ? `${s.slice(0, n)}…` : s);
 
 /** What the user is looking at, in words, sent with each chat message. */
-export function describeView(d: SessionDetail | null, v: View): string {
+export function describeView(d: SessionDetail | null, v: View, lab: LabState | null = null): string {
   if (!d || !v.id) return 'The session list; no session is open.';
   const tab = TABS.find((t) => t.id === v.tab)?.label ?? v.tab;
   const lines = [`Session "${titleOf(d.session)}" (${d.session.id}), ${tab} tab.`];
@@ -110,6 +114,18 @@ export function describeView(d: SessionDetail | null, v: View): string {
   } else if (s.kind === 'child') {
     const c = d.children.find((x) => x.id === s.key);
     if (c) lines.push(`Selected: launched session ${c.id} "${titleOf(c)}" in ${c.folder ?? '?'}, ${formatUsd(c.costUsd)}, ${formatTokens(c.tokens)} tokens.${c.summary ? ` Recap: ${c.summary}` : ''}`);
+  } else if (s.kind === 'suggestion' && lab?.brief) {
+    const v2 = lab.brief.version;
+    lines.push(`Suggestions lab. Brief (v${v2}): ${cut(lab.brief.task, 1500)}\nChecks: ${lab.brief.checks.join(' | ')}`);
+    const base = finished(lab.baseline, v2);
+    const x = lab.suggestions.find((y) => y.id === s.key);
+    if (s.key === 'baseline') lines.push(`Selected: the baseline (${base.length} finished runs).`);
+    else if (x) {
+      lines.push(`Selected: suggestion #${x.rank} "${x.title}" (${x.kind})${x.decision ? `, ${x.decision} by the user` : ', not yet accepted or rejected'}. ${x.description}\nExpected: ${x.expected}\nEvidence: ${x.evidence}\nThe change:\n${cut(x.diff, 4000)}`);
+      const c = compare(base, finished(x.runs, v2));
+      if (c) lines.push(`Results (medians, ${base.length} baseline vs ${finished(x.runs, v2).length} with change): ${Object.entries(c).map(([k, m]) => `${k} ${Number.isFinite(m.base) ? m.base.toFixed(3) : '—'} → ${Number.isFinite(m.cand) ? m.cand.toFixed(3) : '—'}${m.noise ? ' (noise)' : ''}`).join('; ')}`);
+      else lines.push('No finished runs yet.');
+    }
   }
   return lines.join('\n');
 }

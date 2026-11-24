@@ -36,6 +36,27 @@ function buildTree(all: SessionSummary[]): Node[] {
     .sort((a, b) => b.lastActive.localeCompare(a.lastActive));
 }
 
+/** The suggestions lab's status as a small coloured pill (nothing for sessions never analysed). */
+function LabPill({ s }: { s: SessionSummary }) {
+  const l = s.lab;
+  if (!l || l.status === 'failed') return null;
+  const [cls, text, title] =
+    l.status === 'analysing'
+      ? ['analysing', 'analysing', 'The analysis is running']
+      : l.status === 'testing'
+        ? ['testing', 'testing', 'Suggestions are being evaluated']
+        : l.open
+          ? ['open', `${l.open} open`, `${l.open} of ${l.suggestions} suggestion${l.suggestions === 1 ? '' : 's'} not yet accepted or rejected${l.untested ? `; ${l.untested} not yet run` : ''}`]
+          : l.accepted
+            ? ['done', `${l.accepted} accepted`, `All ${l.suggestions} suggestions decided: ${l.accepted} accepted`]
+            : ['done', 'analysed', l.suggestions ? 'All suggestions rejected' : 'Analysed: no suggestions'];
+  return (
+    <span className={`pill pill-${cls}`} title={title}>
+      {text}
+    </span>
+  );
+}
+
 const folderName = (f: string | null) => (f ? f.replace(/\/+$/, '').split('/').pop() || f : '—');
 
 export function Sidebar({ sessions, error, selected, tab }: { sessions: SessionSummary[] | null; error: string | null; selected: string | null; tab: Tab }) {
@@ -81,8 +102,9 @@ function SideRow({ node, selected, tab }: { node: Node; selected: string | null;
         aria-current={isSel ? 'page' : undefined}
       >
         <span className="side-title">
-          {titleOf(s)}
+          <span className="side-title-text">{titleOf(s)}</span>
           {s.headless && <span className="chip">headless</span>}
+          <LabPill s={s} />
         </span>
         <span className="side-ago num" title={node.lastActive || s.end || undefined}>
           {formatAgo(node.lastActive || s.end)}

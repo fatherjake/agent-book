@@ -2,6 +2,7 @@
 import type { ReactNode } from 'react';
 import type { SessionDetail } from '../../server/src/session-detail';
 import { formatCount, formatDur, formatPercent, formatStamp, formatTokens, formatUsd } from './format';
+import { ThemeToggle } from './theme';
 import { titleOf, toHash } from './view';
 
 function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
@@ -33,6 +34,7 @@ export function SessionHeader({ d }: { d: SessionDetail }) {
           <span className="num">
             {formatStamp(s.start)} → {formatStamp(s.end)}
           </span>
+          <ThemeToggle />
         </div>
       </div>
       {(s.summary || d.parent) && (

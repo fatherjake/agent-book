@@ -177,6 +177,19 @@ export function ItemList({ items, onOpen }: { items: Item[]; onOpen?: (id: strin
   );
 }
 
+/** A unified diff, its added and removed lines tinted. */
+export function DiffView({ diff }: { diff: string }) {
+  return (
+    <pre className="code diff">
+      {diff.split('\n').map((l, i) => (
+        <span key={i} className={l.startsWith('+') && !l.startsWith('+++') ? 'diff-add' : l.startsWith('-') && !l.startsWith('---') ? 'diff-del' : l.startsWith('@@') ? 'diff-hunk' : undefined}>
+          {l + '\n'}
+        </span>
+      ))}
+    </pre>
+  );
+}
+
 export interface Segment {
   key: string;
   label: string;
@@ -218,10 +231,10 @@ export function CellBar({ value, max }: { value: number; max: number }) {
 }
 
 /** A selectable table row. */
-export function Row({ selected, onSelect, children, title }: { selected: boolean; onSelect: () => void; children: ReactNode; title?: string }) {
+export function Row({ selected, onSelect, children, title, className }: { selected: boolean; onSelect: () => void; children: ReactNode; title?: string; className?: string }) {
   return (
     <tr
-      className={selected ? 'sel' : undefined}
+      className={[selected ? 'sel' : '', className ?? ''].filter(Boolean).join(' ') || undefined}
       tabIndex={0}
       title={title}
       aria-selected={selected}

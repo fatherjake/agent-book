@@ -17,6 +17,15 @@ interface ChatInfo {
 const chatUrl = (key: string, action = '') => `/api/chat${action}?session=${encodeURIComponent(key)}`;
 
 const DEFAULT_HEIGHT = 240;
+const COLLAPSED_KEY = 'agent-book:chat-collapsed';
+
+function readCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 /** `chatKey` is the open session's id, or "general" with none open. `view` describes the screen now. */
 export function ChatPane({ chatKey, view }: { chatKey: string; view: () => string }) {
@@ -27,6 +36,16 @@ export function ChatPane({ chatKey, view }: { chatKey: string; view: () => strin
   const [error, setError] = useState<string | null>(null);
   const resize = useResizable('agent-book:chat-height', { axis: 'y', invert: true, min: 90, max: () => window.innerHeight - 220 });
   const height = resize.size ?? DEFAULT_HEIGHT;
+  // Collapsed: only the header and the input show; sending a message opens it again.
+  const [collapsed, setCollapsedState] = useState(readCollapsed);
+  const setCollapsed = (c: boolean) => {
+    setCollapsedState(c);
+    try {
+      window.localStorage.setItem(COLLAPSED_KEY, c ? '1' : '0');
+    } catch {
+      // storage unavailable
+    }
+  };
   const log = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
@@ -70,6 +89,7 @@ export function ChatPane({ chatKey, view }: { chatKey: string; view: () => strin
   async function send() {
     const message = draft.trim();
     if (!message || busy) return;
+    if (collapsed) setCollapsed(false);
     setDraft('');
     setError(null);
     setBusy(true);
@@ -132,17 +152,25 @@ export function ChatPane({ chatKey, view }: { chatKey: string; view: () => strin
   }
 
   return (
-    <section className="chat panel" style={{ height }} aria-label="Chat with Claude about this page">
-      <div
-        className="divider divider-y divider-top"
-        onPointerDown={(e) => resize.onPointerDown(e, () => height)}
-        onDoubleClick={resize.reset}
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label="Resize chat"
-        title="Drag to resize, double-click to reset"
-      />
-      <div className="chat-log" ref={log} aria-live="polite">
+    <section className={`chat panel${collapsed ? ' collapsed' : ''}`} style={collapsed ? undefined : { height }} aria-label="Chat with Claude about this page">
+      {!collapsed && (
+        <div
+          className="divider divider-y divider-top"
+          onPointerDown={(e) => resize.onPointerDown(e, () => height)}
+          onDoubleClick={resize.reset}
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize chat"
+          title="Drag to resize, double-click to reset"
+        />
+      )}
+      <div className="panel-head">
+        <span>Chat</span>
+        <button className="panel-button" onClick={() => setCollapsed(!collapsed)} aria-expanded={!collapsed} title={collapsed ? 'Maximise' : 'Minimise'} aria-label={collapsed ? 'Maximise chat' : 'Minimise chat'}>
+          {collapsed ? '□' : '_'}
+        </button>
+      </div>
+      <div className="chat-log" ref={log} aria-live="polite" hidden={collapsed}>
         {messages.length === 0 && (
           <p className="dim">
             {chatKey === 'general'
