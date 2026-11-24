@@ -3,7 +3,8 @@
  * into the telemetry store, plus a hook endpoint for session context.
  *
  *   POST /v1/logs | /v1/traces | /v1/metrics   OTLP/JSON export requests (gzip accepted)
- *   POST /hook                                  a Claude Code hook's stdin JSON (session id, cwd, transcript)
+ *   POST /hook                                  a Claude Code hook's stdin JSON (session id, cwd, transcript);
+ *                                               header x-agent-book-parent: the launching session's id
  *   GET  /health                                {ok, sessions, events, lastEvent}
  *
  * Bound to 127.0.0.1 only. A request that cannot be stored gets a 5xx so the exporter may retry it.
@@ -14,6 +15,7 @@ import { COLLECTOR_PORT, TelemetryDb } from './store.js';
 
 const log = { warn: (msg: string, data: Record<string, unknown>) => console.warn(`collector: ${msg}`, data) };
 const MAX_BODY = 256 * 1024 * 1024;
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SIGNALS: Record<string, 'logs' | 'traces' | 'metrics'> = { '/v1/logs': 'logs', '/v1/traces': 'traces', '/v1/metrics': 'metrics' };
 
 function reply(res: ServerResponse, code: number, body: unknown = {}): void {
@@ -51,7 +53,8 @@ export function startCollector(db: TelemetryDb, o: { port?: number; host?: strin
       if ((req.headers['content-encoding'] ?? '').toLowerCase() === 'gzip') raw = gunzipSync(raw);
       if (path === '/hook') {
         if (!(req.headers['content-type'] ?? '').includes('json')) return reply(res, 415, { error: 'hook posts must be application/json' });
-        db.recordHook(JSON.parse(raw.toString('utf8') || '{}'));
+        const parent = String(req.headers['x-agent-book-parent'] ?? '');
+        db.recordHook({ ...JSON.parse(raw.toString('utf8') || '{}'), parent_session_id: SESSION_ID.test(parent) ? parent : undefined });
         return reply(res, 200, {});
       }
       const signal = SIGNALS[path];

@@ -9,8 +9,9 @@
  *   metrics   metric points (lines of code, commits, active time, …)
  *   bodies    raw API response bodies, gzipped. Request bodies are dropped: each repeats the whole
  *             conversation so far, and Claude Code truncates them at the content limit anyway.
- *   hooks     session context from the SessionStart / UserPromptSubmit hooks: working directory,
- *             transcript file and the git branch at that moment (OpenTelemetry has none of these)
+ *   hooks     session context from the SessionStart hook: working directory, transcript file, the git
+ *             branch at that moment and the session that launched this one, if any (OpenTelemetry has
+ *             none of these)
  *   sessions  one row per session id, kept up to date from the above
  *
  * Identity attributes (user email, account and organisation ids) are not stored, and strings are
@@ -34,7 +35,7 @@ const BODY_EVENTS = new Set(['api_request_body', 'api_response_body']);
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
-  id TEXT PRIMARY KEY, cwd TEXT, branch TEXT, transcript_path TEXT, app_version TEXT, terminal TEXT,
+  id TEXT PRIMARY KEY, cwd TEXT, branch TEXT, transcript_path TEXT, app_version TEXT, terminal TEXT, parent_id TEXT,
   first_ts TEXT, last_ts TEXT, events INTEGER NOT NULL DEFAULT 0, prompts INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS events (
@@ -55,10 +56,17 @@ CREATE TABLE IF NOT EXISTS metrics (
 CREATE INDEX IF NOT EXISTS metrics_session ON metrics(session_id, name);
 CREATE TABLE IF NOT EXISTS bodies (event_id INTEGER PRIMARY KEY, gz BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS hooks (
-  id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, ts TEXT NOT NULL, event TEXT, cwd TEXT, branch TEXT, transcript_path TEXT, source TEXT
+  id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, ts TEXT NOT NULL, event TEXT, cwd TEXT, branch TEXT, transcript_path TEXT, source TEXT,
+  parent_id TEXT
 );
 CREATE INDEX IF NOT EXISTS hooks_session ON hooks(session_id, ts);
 `;
+
+/** Columns added after the first release: [table, column, type]. */
+const ADDED_COLUMNS: [string, string, string][] = [
+  ['sessions', 'parent_id', 'TEXT'],
+  ['hooks', 'parent_id', 'TEXT'],
+];
 
 /** Any timestamp form Claude Code has used (…Z, …+00:00, microseconds) as a sortable ISO string. */
 const iso = (v: unknown): string | null => {
@@ -88,6 +96,8 @@ export interface HookInput {
   cwd?: string;
   hook_event_name?: string;
   source?: string;
+  /** The session that launched this one (headless `claude -p` started from another session). */
+  parent_session_id?: string;
 }
 
 export class TelemetryDb {
@@ -100,6 +110,10 @@ export class TelemetryDb {
       this.raw.pragma('journal_mode = WAL');
       this.raw.pragma('synchronous = NORMAL');
       this.raw.exec(SCHEMA);
+      for (const [table, column, type] of ADDED_COLUMNS) {
+        const cols = this.raw.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+        if (!cols.some((c) => c.name === column)) this.raw.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
     }
   }
 
@@ -190,7 +204,7 @@ export class TelemetryDb {
     return n;
   }
 
-  /** Record a hook call (SessionStart / UserPromptSubmit): where the session runs and on which branch. */
+  /** Record a SessionStart hook call: where the session runs, on which branch, and who launched it. */
   recordHook(h: HookInput, ts = new Date().toISOString()): void {
     if (!h.session_id) return;
     const cwd = h.cwd ?? null;
@@ -201,11 +215,14 @@ export class TelemetryDb {
       } catch {
         /* not a repo */
       }
-    this.raw.prepare('INSERT INTO hooks (session_id, ts, event, cwd, branch, transcript_path, source) VALUES (?, ?, ?, ?, ?, ?, ?)').run(h.session_id, ts, h.hook_event_name ?? null, cwd, branch, h.transcript_path ?? null, h.source ?? null);
+    const parent = h.parent_session_id && h.parent_session_id !== h.session_id ? h.parent_session_id : null;
+    this.raw
+      .prepare('INSERT INTO hooks (session_id, ts, event, cwd, branch, transcript_path, source, parent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(h.session_id, ts, h.hook_event_name ?? null, cwd, branch, h.transcript_path ?? null, h.source ?? null, parent);
     this.touch(h.session_id, ts);
     this.raw
-      .prepare('UPDATE sessions SET cwd = COALESCE(?, cwd), branch = COALESCE(?, branch), transcript_path = COALESCE(?, transcript_path) WHERE id = ?')
-      .run(cwd, branch, h.transcript_path ?? null, h.session_id);
+      .prepare('UPDATE sessions SET cwd = COALESCE(?, cwd), branch = COALESCE(?, branch), transcript_path = COALESCE(?, transcript_path), parent_id = COALESCE(?, parent_id) WHERE id = ?')
+      .run(cwd, branch, h.transcript_path ?? null, parent, h.session_id);
   }
 
   /** Set a session's working directory when nothing better is known (imports, transcript fallback). */
