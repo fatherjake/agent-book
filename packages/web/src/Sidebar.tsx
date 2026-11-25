@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionSummary } from '../../server/src/sessions';
 import { formatAgo, formatDur, formatUsd } from './format';
 import { titleOf, toHash, type Tab } from './view';
@@ -59,13 +59,47 @@ function LabPill({ s }: { s: SessionSummary }) {
 
 const folderName = (f: string | null) => (f ? f.replace(/\/+$/, '').split('/').pop() || f : '—');
 
+type SortBy = 'date' | 'cost';
+const SORT_KEY = 'agent-book:sessions-sort';
+
+function readSort(): SortBy {
+  try {
+    return window.localStorage.getItem(SORT_KEY) === 'cost' ? 'cost' : 'date';
+  } catch {
+    return 'date';
+  }
+}
+
+/** Most expensive first (by the cost shown on the row), ties newest first; otherwise the tree's own order. */
+function sortTree(tree: Node[], by: SortBy): Node[] {
+  if (by === 'date') return tree;
+  return [...tree].sort((a, b) => b.s.costUsd - a.s.costUsd || b.lastActive.localeCompare(a.lastActive));
+}
+
 export function Sidebar({ sessions, error, selected, tab }: { sessions: SessionSummary[] | null; error: string | null; selected: string | null; tab: Tab }) {
-  const tree = useMemo(() => buildTree(sessions ?? []), [sessions]);
+  const [sortBy, setSortByState] = useState<SortBy>(readSort);
+  const setSortBy = (by: SortBy) => {
+    setSortByState(by);
+    try {
+      window.localStorage.setItem(SORT_KEY, by);
+    } catch {
+      // storage unavailable
+    }
+  };
+  const tree = useMemo(() => sortTree(buildTree(sessions ?? []), sortBy), [sessions, sortBy]);
   return (
     <aside className="sidebar panel">
       <div className="panel-head">
-        <span>Sessions</span>
-        {sessions && <span className="dim">{tree.length}</span>}
+        <span>
+          Sessions{sessions && <span className="dim side-count">{tree.length}</span>}
+        </span>
+        <span className="sort-toggle" role="group" aria-label="Sort sessions by">
+          {(['date', 'cost'] as const).map((by) => (
+            <button key={by} className={`sort-option${sortBy === by ? ' active' : ''}`} aria-pressed={sortBy === by} onClick={() => setSortBy(by)} title={by === 'date' ? 'Most recently active first' : 'Most expensive first'}>
+              {by}
+            </button>
+          ))}
+        </span>
       </div>
       <div className="scroll">
         {error && <p className="pad error">Couldn't load sessions: {error}</p>}

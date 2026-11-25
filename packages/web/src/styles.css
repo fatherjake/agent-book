@@ -181,6 +181,14 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 
 /* --- Sidebar ------------------------------------------------------------------------------------- */
 .side-list { list-style: none; margin: 0; padding: 0; }
+.side-count { margin-left: 8px; }
+.sort-toggle { display: inline-flex; gap: 2px; margin-right: -4px; }
+.sort-option {
+  padding: 1px 5px; font: inherit; letter-spacing: inherit; text-transform: inherit; color: var(--dim);
+  background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer;
+}
+.sort-option:hover { color: var(--strong); border-color: var(--border-strong); }
+.sort-option.active { color: var(--strong); background: var(--row-sel); }
 .side-row {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 8px; padding: 5px 8px;
   text-decoration: none; border-left: 2px solid transparent; border-bottom: 1px solid var(--border);
